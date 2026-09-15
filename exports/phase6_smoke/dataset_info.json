@@ -1,0 +1,145 @@
+{
+  "export_format_version": "1.0.0",
+  "raw_format_version": "0.1.0",
+  "created_at": "2026-09-15T19:39:48.546191+00:00",
+  "source_dataset": "C:\\Users\\yjh\\Desktop\\work_project\\ai_BOT\\dataset\\phase5_smoke_4",
+  "source_manifest_sha256": "72d97b9b8978545359ff75e8e3fa95eea9508c97e8125865b44f1b3e97874733",
+  "storage": {
+    "format": "HDF5",
+    "episodes_per_shard": 2,
+    "compression": "gzip",
+    "compression_level": 4,
+    "num_shards": 2,
+    "source_size_bytes": 75347,
+    "exported_shard_size_bytes": 86697,
+    "shard_to_source_size_ratio": 1.1506363889736817
+  },
+  "statistics": {
+    "num_episodes": 4,
+    "num_success": 4,
+    "num_failure": 0,
+    "success_rate": 1.0,
+    "total_transitions": 481,
+    "episode_steps_min": 120,
+    "episode_steps_max": 121,
+    "episode_steps_mean": 120.25
+  },
+  "splits": {
+    "train": 3,
+    "validation": 1,
+    "test": 0
+  },
+  "tensor_schema": {
+    "q": {
+      "shape": [
+        "T",
+        9
+      ],
+      "dtype": "float32",
+      "description": "robot joint position"
+    },
+    "dq": {
+      "shape": [
+        "T",
+        9
+      ],
+      "dtype": "float32",
+      "description": "robot joint velocity"
+    },
+    "eef_pose": {
+      "shape": [
+        "T",
+        7
+      ],
+      "dtype": "float32",
+      "description": "end-effector pose in robot root frame; xyz + quaternion wxyz"
+    },
+    "object_pose": {
+      "shape": [
+        "T",
+        7
+      ],
+      "dtype": "float32",
+      "description": "object pose in robot root frame; xyz + quaternion wxyz"
+    },
+    "action": {
+      "shape": [
+        "T",
+        8
+      ],
+      "dtype": "float32",
+      "description": "absolute IK pose target (xyz + quaternion wxyz) + gripper command"
+    },
+    "reward": {
+      "shape": [
+        "T"
+      ],
+      "dtype": "float32",
+      "description": "manager environment reward"
+    },
+    "timestamp": {
+      "shape": [
+        "T"
+      ],
+      "dtype": "float64",
+      "description": "simulation time in seconds"
+    },
+    "controller_state": {
+      "shape": [
+        "T"
+      ],
+      "dtype": "int64",
+      "description": "scripted pick-and-lift state enum"
+    }
+  },
+  "coordinate_conventions": {
+    "pose_order": "x, y, z, qw, qx, qy, qz",
+    "eef_pose_frame": "robot_root",
+    "object_pose_frame": "robot_root"
+  },
+  "observed_domain_parameters": {
+    "object_x_m": [
+      0.49169259470054966,
+      0.5818621271556732
+    ],
+    "object_y_m": [
+      -0.10596582943029205,
+      0.04410773338958496
+    ],
+    "object_yaw_deg": [
+      -114.24302649913591,
+      20.8153949722103
+    ],
+    "object_mass_kg": [
+      0.0991716703311052,
+      0.1967611389690846
+    ],
+    "static_friction": [
+      0.5241019510502377,
+      0.5948273026616416
+    ],
+    "dynamic_friction": [
+      0.4103704610447613,
+      0.48688260237285846
+    ]
+  },
+  "software_versions": {
+    "isaaclab": "2.3.2",
+    "isaacsim": "5.1.0.0",
+    "torch": "2.7.0+cu128",
+    "numpy": "1.26.0",
+    "h5py": "3.14.0"
+  },
+  "shards": [
+    {
+      "path": "shards/shard_00000.h5",
+      "sha256": "bb3289a50835b9f8def6dd4da2bc827fa7ee4feb69ff02ed65c859069cad3f8e",
+      "size_bytes": 43539
+    },
+    {
+      "path": "shards/shard_00001.h5",
+      "sha256": "9c72385a6fa6179d5fa428752e1e04d36e5d74b4c89861e1ae2bd86cd778eaf5",
+      "size_bytes": 43158
+    }
+  ]
+}

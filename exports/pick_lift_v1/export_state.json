@@ -1,0 +1,23 @@
+{
+  "status": "complete",
+  "created_at": "2026-09-15T19:40:32.450430+00:00",
+  "settings": {
+    "source_dir": "C:\\Users\\yjh\\Desktop\\work_project\\ai_BOT\\dataset\\phase5_validation_128",
+    "source_manifest_sha256": "1426c410d75e93ece4e22c21f6a4de20492f3312350ba0a89a6e5cf7f5975778",
+    "output_dir": "C:\\Users\\yjh\\Desktop\\work_project\\ai_BOT\\exports\\pick_lift_v1",
+    "episodes_per_shard": 64,
+    "compression": "gzip",
+    "compression_level": 4,
+    "split_ratios": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "split_seed": 42
+  },
+  "completed_shards": [
+    0,
+    1
+  ],
+  "completed_at": "2026-09-15T19:40:33.425618+00:00"
+}

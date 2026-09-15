@@ -1,0 +1,21 @@
+{
+  "seed": 42,
+  "ratios": {
+    "train": 0.8,
+    "validation": 0.1,
+    "test": 0.1
+  },
+  "counts": {
+    "train": 1,
+    "validation": 0,
+    "test": 0
+  },
+  "stratified_by": "success",
+  "episodes": {
+    "train": [
+      1
+    ],
+    "validation": [],
+    "test": []
+  }
+}

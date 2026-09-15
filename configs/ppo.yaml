@@ -1,0 +1,15 @@
+version: "1.0.0"
+backend: rsl_rl
+backend_version: "3.1.2"
+official_agent_config: LiftCubePPORunnerCfg
+environment: PickLiftPPOEnvCfg
+seed: 42
+num_envs: 1024
+num_steps_per_env: 24
+max_iterations: 1500
+save_interval: 50
+output_root: ../results/ppo
+
+# PPO hyperparameters are inherited from Isaac Lab 2.3.2's official
+# Franka LiftCube RSL-RL config. This file only records project-level
+# run controls so the upstream algorithm implementation remains reusable.

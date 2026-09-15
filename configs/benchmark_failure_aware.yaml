@@ -1,0 +1,19 @@
+benchmark_version: "1.0.0"
+task: Franka-Pick-and-Lift-v0
+controller: scripted_absolute_differential_ik
+num_envs: 128
+episodes_per_level: 256
+max_steps: 300
+output_dir: ../results/benchmark_failure_aware
+
+success_criteria:
+  minimum_height_above_table_m: 0.10
+  maximum_mean_finger_position: 0.030
+  maximum_ee_object_distance_m: 0.08
+  sustained_steps: 10
+
+levels:
+  failure_aware:
+    seed: 9101
+    randomization_config: randomization_failure_aware.yaml
+    description: 70% empirical failure-neighborhood sampling plus 30% uniform Hard exploration.

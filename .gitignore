@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+_deps/*.partial
+dataset/
+logs/
+
+results/*
+!results/phase1/
+!results/phase1/camera_rgb.png
+!results/phase1/camera_depth_preview.png
+!results/phase2/
+!results/phase2/pick_lift_final_rgb.png

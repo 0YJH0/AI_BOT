@@ -1,0 +1,16 @@
+seed: 9101
+base_config: randomization_hard.yaml
+strategy:
+  type: failure_replay_jitter
+  hard_case_probability: 0.7
+  failure_cases_csv: ../results/failure_analysis/failure_cases.csv
+  failure_cases_sha256: 94efc77cfbb24a109792b74ecb54ae0576a6389da0eb1379cc7cac02bd0ddafe
+  analysis_report: ../results/failure_analysis/failure_analysis_report.json
+  analysis_report_sha256: 494b634c4f8947cb6ff7152064b34d3c95c8e2148a35614d8964a6c6dfae1255
+  jitter_fraction_of_base_range:
+    position_x_m: 0.06
+    position_y_m: 0.06
+    yaw_deg: 0.05
+    mass_kg: 0.06
+    static_friction: 0.06
+    dynamic_friction_ratio: 0.04
