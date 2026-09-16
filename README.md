@@ -2,7 +2,7 @@
 
 面向求职展示的机器人操作仿真、并行数据生成与自动评测项目。
 
-当前完成阶段：Phase 0、Phase 1、Phase 2、Phase 3、Phase 4、Phase 5、Phase 6、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11（可选 PPO 基线与负结果分析）。
+当前完成阶段：Phase 0 至 Phase 11；Phase 11 已包含旧 joint-position 负基线，以及通过 Scripted IK 示范热启动和保守 PPO 微调得到的正式 10 cm 抬升策略。
 
 ## Phase 1 场景
 
@@ -191,13 +191,21 @@ python scripts\collect_data.py --headless --enable_cameras `
 
 ## Phase 11 Optional PPO
 
-复用 Isaac Lab 官方 RSL-RL PPO 配置，在项目专用的 joint-position 环境中训练，并使用 Phase 7 相同协议独立评测：
+复用 Isaac Lab 官方 RSL-RL PPO 配置。当前方案使用 57 维状态观测、absolute-IK 动作、自适应几何/夹持阶段、原地垂直抬升示教和两轮 DAgger，并使用 Phase 7 相同协议独立评测：
 
 ```powershell
-python scripts\train_ppo.py --headless --iterations 1500 --num-envs 1024 `
-  --run-name jointpos_shaped_height_1024env_1500iter
-python scripts\evaluate_ppo.py --headless
+python scripts\train_bc_warmstart.py --headless --num-envs 1024 --horizon 220 `
+  --epochs 30 --lift-delta-m 0.15 --dagger-rounds 2 --dagger-epochs 10 `
+  --output-dir results\ppo\bc_dagger2_adaptive_contact_vertical_ik_abs_1024env
+python scripts\train_ppo.py --headless --action-space ik_abs --num-envs 1024 `
+  --iterations 20 --action-noise-std 0.005 --learning-rate 0.000001 `
+  --resume-checkpoint results\ppo\bc_dagger2_adaptive_contact_vertical_ik_abs_1024env\model_bc.pt `
+  --run-name ik_abs_dagger2_adaptive_vertical_ppo_1024env_20iter
+python scripts\evaluate_ppo.py --headless --action-space ik_abs `
+  --checkpoint results\ppo\ik_abs_dagger2_adaptive_vertical_ppo_1024env_20iter\model_20.pt `
+  --episodes-per-level 256 --max-steps 600 `
+  --output-dir results\ppo_evaluation_dagger2_adaptive_vertical_ppo_final
 python scripts\plot_ppo_comparison.py
 ```
 
-当前 `model_500.pt` 的正式结果为 Easy / Medium / Hard 均 0%；策略能靠近并闭爪，但没有稳定抬升到 10 cm。该结果作为真实负基线保留，不能写成 PPO 抓取成功。训练/恢复机制、动作空间纠正、reward shaping、逐档结果和后续改进见 `docs/phase11_ppo.md`。
+正式判据为“桌面上方 10 cm、闭爪、物体仍被持有、连续 10 帧”。当前最佳 DAgger checkpoint 为 Easy 100.00%、Medium 77.73%、Hard 73.83%；完成 20 次微调的 PPO checkpoint 为 100.00%、77.73%、57.42%。旧 PPO 的 100.00% / 32.42% / 10.16% 和 joint-position 三档 0% 仍作为消融基线保留。训练策略、动作空间、失败分析和完整结果见 `docs/phase11_ppo.md`。

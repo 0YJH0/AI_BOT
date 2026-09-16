@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -33,6 +34,24 @@ parser.add_argument("--iterations", type=int, default=None)
 parser.add_argument("--num-envs", type=int, default=None)
 parser.add_argument("--run-name", default=None)
 parser.add_argument(
+    "--action-space",
+    choices=("joint", "ik_abs"),
+    default="joint",
+    help="Use the official joint-position task or the scripted-controller-compatible IK action space.",
+)
+parser.add_argument(
+    "--action-noise-std",
+    type=float,
+    default=None,
+    help="Override the loaded PPO action standard deviation (IK default: 0.05).",
+)
+parser.add_argument(
+    "--learning-rate",
+    type=float,
+    default=None,
+    help="Override the official PPO learning rate (use a small value for BC fine-tuning).",
+)
+parser.add_argument(
     "--resume-checkpoint",
     type=Path,
     default=None,
@@ -56,6 +75,8 @@ try:
     )
 
     from isaac_lab_data_engine.envs.pick_lift_env_cfg import (
+        PickLiftEnvCfg,
+        PickLiftIKPPOEnvCfg,
         PickLiftPPOEnvCfg,
         configure_parallel_physx_capacity,
     )
@@ -84,7 +105,7 @@ def main() -> None:
 
     seed = int(project_cfg["seed"])
     torch.manual_seed(seed)
-    env_cfg = PickLiftPPOEnvCfg()
+    env_cfg = PickLiftPPOEnvCfg() if args.action_space == "joint" else PickLiftIKPPOEnvCfg()
     env_cfg.seed = seed
     env_cfg.scene.num_envs = num_envs
     env_cfg.scene.table_camera = None
@@ -99,6 +120,10 @@ def main() -> None:
     agent_cfg.num_steps_per_env = int(project_cfg["num_steps_per_env"])
     agent_cfg.max_iterations = iterations
     agent_cfg.save_interval = min(int(project_cfg["save_interval"]), max(iterations, 1))
+    if args.learning_rate is not None:
+        if args.learning_rate <= 0.0:
+            raise ValueError("learning-rate must be positive")
+        agent_cfg.algorithm.learning_rate = args.learning_rate
     agent_dict = agent_cfg.to_dict()
     (output_dir / "agent_config.yaml").write_text(
         yaml.safe_dump(agent_dict, sort_keys=False), encoding="utf-8"
@@ -121,9 +146,27 @@ def main() -> None:
         # Advance once so a resumed run does not repeat that optimizer update.
         runner.current_learning_iteration += 1
         start_iteration = runner.current_learning_iteration
+    action_noise_std = args.action_noise_std
+    if action_noise_std is None and args.action_space == "ik_abs":
+        action_noise_std = 0.05
+    if action_noise_std is not None:
+        if action_noise_std <= 0.0:
+            raise ValueError("action-noise-std must be positive")
+        with torch.no_grad():
+            if hasattr(runner.alg.policy, "std"):
+                runner.alg.policy.std.fill_(action_noise_std)
+            elif hasattr(runner.alg.policy, "log_std"):
+                runner.alg.policy.log_std.fill_(math.log(action_noise_std))
+            else:
+                raise AttributeError("Policy exposes neither std nor log_std")
     started = time.perf_counter()
     try:
-        runner.learn(num_learning_iterations=iterations, init_at_random_ep_len=True)
+        runner.learn(
+            num_learning_iterations=iterations,
+            # The IK policy observes an adaptive manipulation phase. Keep
+            # episode starts synchronized with the reset robot/object state.
+            init_at_random_ep_len=args.action_space == "joint",
+        )
     finally:
         wrapped.close()
     wall_time = time.perf_counter() - started
@@ -141,6 +184,9 @@ def main() -> None:
         "start_iteration": start_iteration,
         "final_iteration": final_iteration,
         "resume_checkpoint": str(resume_checkpoint) if resume_checkpoint else None,
+        "action_space": args.action_space,
+        "action_noise_std": action_noise_std,
+        "learning_rate": agent_cfg.algorithm.learning_rate,
         "num_steps_per_env": agent_cfg.num_steps_per_env,
         "training_transitions": num_envs * agent_cfg.num_steps_per_env * iterations,
         "wall_time_s": wall_time,

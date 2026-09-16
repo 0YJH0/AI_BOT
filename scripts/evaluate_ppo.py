@@ -39,6 +39,7 @@ parser.add_argument(
 )
 parser.add_argument("--benchmark-config", type=Path, default=ROOT / "configs" / "benchmark.yaml")
 parser.add_argument("--agent-config", type=Path, default=None)
+parser.add_argument("--action-space", choices=("joint", "ik_abs"), default="joint")
 parser.add_argument("--levels", nargs="+", default=None)
 parser.add_argument("--num-envs", type=int, default=128)
 parser.add_argument("--episodes-per-level", type=int, default=256)
@@ -63,6 +64,8 @@ try:
     )
     from isaac_lab_data_engine.envs.phase1_scene import TABLE_TOP_Z
     from isaac_lab_data_engine.envs.pick_lift_env_cfg import (
+        PickLiftEnvCfg,
+        PickLiftIKPPOEnvCfg,
         PickLiftPPOEnvCfg,
         configure_parallel_physx_capacity,
     )
@@ -248,7 +251,7 @@ def main() -> None:
 
     agent_path = args.agent_config or checkpoint.parent / "agent_config.yaml"
     agent_cfg = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
-    env_cfg = PickLiftPPOEnvCfg()
+    env_cfg = PickLiftPPOEnvCfg() if args.action_space == "joint" else PickLiftIKPPOEnvCfg()
     env_cfg.scene.num_envs = args.num_envs
     env_cfg.scene.table_camera = None
     env_cfg.scene.robot.spawn.semantic_tags = None
@@ -312,6 +315,7 @@ def main() -> None:
         config_snapshot={
             "phase": 11,
             "policy": "rsl_rl_ppo",
+            "action_space": args.action_space,
             "checkpoint": str(checkpoint),
             "benchmark_config": str(args.benchmark_config.resolve()),
             "agent_config": str(agent_path.resolve()),
