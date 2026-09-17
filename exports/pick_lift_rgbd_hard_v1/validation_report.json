@@ -1,0 +1,15 @@
+{
+  "status": "DATASET_EXPORT_VALIDATION_OK",
+  "validated_at": "2026-09-17T08:13:17.870830+00:00",
+  "num_episodes": 64,
+  "num_shards": 4,
+  "total_transitions": 8080,
+  "source_value_comparison": true,
+  "split_counts": {
+    "train": 51,
+    "validation": 7,
+    "test": 6
+  },
+  "validation_wall_time_s": 6.473865899984958,
+  "export_wall_time_s": 22.098235699988436
+}

@@ -45,9 +45,17 @@ parser.add_argument("--num-envs", type=int, default=128)
 parser.add_argument("--episodes-per-level", type=int, default=256)
 parser.add_argument("--max-steps", type=int, default=600)
 parser.add_argument("--output-dir", type=Path, default=ROOT / "results" / "ppo_evaluation_shaped")
+parser.add_argument(
+    "--visual-checkpoint",
+    type=Path,
+    default=None,
+    help="Replace privileged object terms with RGB-D predictions (IK 57-D policies only).",
+)
+parser.add_argument("--visual-camera-interval", type=int, default=5)
+parser.add_argument("--visual-ema-alpha", type=float, default=0.45)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
-args.enable_cameras = False
+args.enable_cameras = args.visual_checkpoint is not None
 
 app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
@@ -70,10 +78,106 @@ try:
         configure_parallel_physx_capacity,
     )
     from isaac_lab_data_engine.randomization import create_domain_randomizer
+    from isaac_lab_data_engine.vision import (
+        RGBDPoseEstimator,
+        VisualPolicyObservationAdapter,
+        camera_to_world_position,
+        world_to_root_position,
+    )
 except BaseException:
     traceback.print_exc()
     simulation_app.close()
     sys.exit(1)
+
+
+def _refresh_camera(env: ManagerBasedRLEnv) -> None:
+    camera = env.scene["table_camera"]
+    for _ in range(3):
+        env.sim.render()
+        camera.update(env.physics_dt, force_recompute=True)
+
+
+def _workspace_mask(env: ManagerBasedRLEnv) -> torch.Tensor:
+    camera = env.scene["table_camera"]
+    depth = camera.data.output["distance_to_image_plane"]
+    if depth.ndim == 4:
+        depth = depth[..., 0]
+    intrinsics = camera.data.intrinsic_matrices
+    _, height, width = depth.shape
+    y, x = torch.meshgrid(
+        torch.arange(height, device=env.device, dtype=depth.dtype),
+        torch.arange(width, device=env.device, dtype=depth.dtype),
+        indexing="ij",
+    )
+    x_camera = (x[None] - intrinsics[:, 0, 2, None, None]) / intrinsics[:, 0, 0, None, None] * depth
+    y_camera = (y[None] - intrinsics[:, 1, 2, None, None]) / intrinsics[:, 1, 1, None, None] * depth
+    position_camera = torch.stack((x_camera, y_camera, depth), dim=-1)
+    position_w = camera_to_world_position(
+        position_camera,
+        camera.data.pos_w[:, None, None, :],
+        camera.data.quat_w_ros[:, None, None, :],
+    )
+    robot = env.scene["robot"]
+    position_b = world_to_root_position(
+        position_w,
+        robot.data.root_pos_w[:, None, None, :],
+        robot.data.root_quat_w[:, None, None, :],
+    )
+    return (
+        torch.isfinite(depth)
+        & (position_b[..., 0] >= 0.33)
+        & (position_b[..., 0] <= 0.81)
+        & (position_b[..., 1] >= -0.33)
+        & (position_b[..., 1] <= 0.33)
+        & (position_b[..., 2] >= -0.015)
+        & (position_b[..., 2] <= 0.09)
+    )
+
+
+@torch.no_grad()
+def _visual_position_b(env: ManagerBasedRLEnv, estimator: RGBDPoseEstimator) -> torch.Tensor:
+    camera = env.scene["table_camera"]
+    position_camera = estimator.predict(
+        camera.data.output["rgb"],
+        camera.data.output["distance_to_image_plane"],
+        camera.data.intrinsic_matrices,
+        valid_pixel_mask=_workspace_mask(env),
+    )
+    position_w = camera_to_world_position(
+        position_camera, camera.data.pos_w, camera.data.quat_w_ros
+    )
+    robot = env.scene["robot"]
+    position_b = world_to_root_position(
+        position_w, robot.data.root_pos_w, robot.data.root_quat_w
+    )
+    position_b[:, 0].clamp_(0.36, 0.78)
+    position_b[:, 1].clamp_(-0.30, 0.30)
+    position_b[:, 2] = 0.03
+    return position_b
+
+
+def _patch_visual_observations(
+    observations: Any,
+    adapter: VisualPolicyObservationAdapter,
+    visual_position: torch.Tensor,
+    elapsed: torch.Tensor,
+) -> Any:
+    """Patch either a legacy tensor or RSL-RL 3.x TensorDict policy group."""
+
+    if isinstance(observations, torch.Tensor):
+        return adapter.patch(
+            observations, visual_position, elapsed_s=elapsed, apply_filter=False
+        )
+    try:
+        policy_observation = observations["policy"]
+    except (KeyError, TypeError) as error:
+        raise TypeError(
+            f"Unsupported RSL observation container: {type(observations).__name__}"
+        ) from error
+    observations["policy"] = adapter.patch(
+        policy_observation, visual_position, elapsed_s=elapsed, apply_filter=False
+    )
+    return observations
 
 
 def _run_batch(
@@ -83,10 +187,21 @@ def _run_batch(
     randomizer: Any,
     criteria: dict[str, float | int],
     max_steps: int,
+    visual_estimator: RGBDPoseEstimator | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, float | int]]:
     wrapped.reset()
     domain_params = randomizer.apply_batch(env, randomizer.sample_batch(env.num_envs))
     observations = wrapped.get_observations()
+    visual_adapter = None
+    visual_position = None
+    if visual_estimator is not None:
+        _refresh_camera(env)
+        visual_adapter = VisualPolicyObservationAdapter(ema_alpha=args.visual_ema_alpha)
+        visual_position = visual_adapter.filter_position(_visual_position_b(env, visual_estimator))
+        elapsed = env.episode_length_buf.float() * env.step_dt
+        observations = _patch_visual_observations(
+            observations, visual_adapter, visual_position, elapsed
+        )
 
     done = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
     success = torch.zeros_like(done)
@@ -113,6 +228,21 @@ def _run_batch(
             active = ~done
             actions = policy(observations)
             observations, rewards, dones, _ = wrapped.step(actions)
+            if visual_estimator is not None:
+                assert visual_adapter is not None and visual_position is not None
+                # Fuse only unobstructed initial frames, then latch the static
+                # tabletop target before the arm occludes it.
+                if (
+                    vector_steps <= 10
+                    and vector_steps % args.visual_camera_interval == 0
+                ):
+                    visual_position = visual_adapter.filter_position(
+                        _visual_position_b(env, visual_estimator)
+                    )
+                elapsed = env.episode_length_buf.float() * env.step_dt
+                observations = _patch_visual_observations(
+                    observations, visual_adapter, visual_position, elapsed
+                )
             cumulative_reward += rewards * active
 
             object_position_w = env.scene["object"].data.root_pos_w
@@ -243,6 +373,13 @@ def main() -> None:
         raise FileNotFoundError(checkpoint)
     if min(args.num_envs, args.episodes_per_level, args.max_steps) < 1:
         raise ValueError("num-envs, episodes-per-level, and max-steps must be positive")
+    if args.visual_checkpoint is not None:
+        if args.action_space != "ik_abs":
+            raise ValueError("Visual observation replacement currently requires --action-space ik_abs")
+        if args.visual_camera_interval < 1:
+            raise ValueError("visual-camera-interval must be positive")
+        if not args.visual_checkpoint.is_file():
+            raise FileNotFoundError(args.visual_checkpoint)
     benchmark_cfg = load_benchmark_config(args.benchmark_config)
     levels_by_name = {level.name: level for level in benchmark_cfg.levels}
     selected_names = args.levels or list(levels_by_name)
@@ -253,7 +390,8 @@ def main() -> None:
     agent_cfg = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
     env_cfg = PickLiftPPOEnvCfg() if args.action_space == "joint" else PickLiftIKPPOEnvCfg()
     env_cfg.scene.num_envs = args.num_envs
-    env_cfg.scene.table_camera = None
+    if args.visual_checkpoint is None:
+        env_cfg.scene.table_camera = None
     env_cfg.scene.robot.spawn.semantic_tags = None
     env_cfg.scene.object.spawn.semantic_tags = None
     env_cfg.scene.table.spawn.semantic_tags = None
@@ -266,6 +404,11 @@ def main() -> None:
     runner = OnPolicyRunner(wrapped, agent_cfg, log_dir=None, device=args.device)
     runner.load(str(checkpoint), load_optimizer=False, map_location=args.device)
     policy = runner.get_inference_policy(device=args.device)
+    visual_estimator = (
+        RGBDPoseEstimator.load(args.visual_checkpoint, args.device)
+        if args.visual_checkpoint is not None
+        else None
+    )
     summaries: list[dict[str, Any]] = []
     all_rows: list[dict[str, Any]] = []
     try:
@@ -276,7 +419,13 @@ def main() -> None:
             metrics: list[dict[str, float | int]] = []
             for batch_index in range(math.ceil(args.episodes_per_level / args.num_envs)):
                 rows, batch_metrics = _run_batch(
-                    env, wrapped, policy, randomizer, benchmark_cfg.success_criteria, args.max_steps
+                    env,
+                    wrapped,
+                    policy,
+                    randomizer,
+                    benchmark_cfg.success_criteria,
+                    args.max_steps,
+                    visual_estimator,
                 )
                 for row in rows[: args.episodes_per_level - len(level_rows)]:
                     row.update(
@@ -324,6 +473,10 @@ def main() -> None:
             "episodes_per_level": args.episodes_per_level,
             "max_steps": args.max_steps,
             "physx_gpu_total_aggregate_pairs_capacity": capacity,
+            "visual_checkpoint": (
+                str(args.visual_checkpoint.resolve()) if args.visual_checkpoint else None
+            ),
+            "object_observation_source": "rgbd" if args.visual_checkpoint else "simulator_state",
             "success_criteria": benchmark_cfg.success_criteria,
         },
         summaries=summaries,
