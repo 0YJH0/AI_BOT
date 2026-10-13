@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -16,9 +17,16 @@ from isaac_lab_data_engine.benchmark.reporting import classify_failure
 
 
 class VectorizedBenchmarkRunner:
-    def __init__(self, env: ManagerBasedRLEnv, criteria: dict[str, float | int]) -> None:
+    def __init__(
+        self,
+        env: ManagerBasedRLEnv,
+        criteria: dict[str, float | int],
+        *,
+        object_position_provider: Callable[[ManagerBasedRLEnv], torch.Tensor] | None = None,
+    ) -> None:
         self.env = env
         self.criteria = criteria
+        self.object_position_provider = object_position_provider
 
     def _task_poses(self) -> tuple[torch.Tensor, torch.Tensor]:
         robot = self.env.scene["robot"]
@@ -51,6 +59,23 @@ class VectorizedBenchmarkRunner:
         domain_params = randomizer.apply_batch(env, randomizer.sample_batch(env.num_envs))
         controller = PickAndLiftStateMachine(env.step_dt, env.num_envs, env.device)
         ee_pose_b, _ = self._task_poses()
+        controlled_object_pose_b = None
+        initial_true_object_pose_b = self._task_poses()[1].clone()
+        if self.object_position_provider is not None:
+            visual_position_b = self.object_position_provider(env)
+            if visual_position_b.shape != (env.num_envs, 3):
+                raise ValueError(
+                    "object_position_provider must return [num_envs,3], got "
+                    f"{tuple(visual_position_b.shape)}"
+                )
+            # The current visual model estimates XYZ only.  The cube is
+            # symmetric around yaw, so a neutral quaternion is sufficient for
+            # the scripted top grasp and avoids leaking simulator orientation.
+            controlled_object_pose_b = torch.zeros(
+                (env.num_envs, 7), dtype=visual_position_b.dtype, device=env.device
+            )
+            controlled_object_pose_b[:, :3] = visual_position_b
+            controlled_object_pose_b[:, 3] = 1.0
         actions = torch.cat(
             (ee_pose_b, torch.ones((env.num_envs, 1), device=env.device)), dim=-1
         )
@@ -84,17 +109,26 @@ class VectorizedBenchmarkRunner:
                 _, reward, terminated, truncated, _ = env.step(actions)
                 cumulative_reward += reward * active
 
-                ee_pose_b, object_pose_b = self._task_poses()
-                lift_position_b = env.command_manager.get_command("object_pose")[:, :3]
-                lift_pose_b = torch.cat(
-                    (
-                        lift_position_b,
-                        torch.tensor((0.0, 1.0, 0.0, 0.0), device=env.device).repeat(
-                            env.num_envs, 1
+                ee_pose_b, true_object_pose_b = self._task_poses()
+                if controlled_object_pose_b is None:
+                    object_pose_b = true_object_pose_b
+                    lift_position_b = env.command_manager.get_command("object_pose")[:, :3]
+                    lift_pose_b = torch.cat(
+                        (
+                            lift_position_b,
+                            torch.tensor((0.0, 1.0, 0.0, 0.0), device=env.device).repeat(
+                                env.num_envs, 1
+                            ),
                         ),
-                    ),
-                    dim=-1,
-                )
+                        dim=-1,
+                    )
+                else:
+                    # Latch the unobstructed tabletop estimate and lift
+                    # vertically above that estimate.  No object truth enters
+                    # the controller after the provider returns.
+                    object_pose_b = controlled_object_pose_b
+                    lift_pose_b = controlled_object_pose_b.clone()
+                    lift_pose_b[:, 2] += 0.18
                 actions = controller.compute(ee_pose_b, object_pose_b, lift_pose_b)
 
                 object_position_w = env.scene["object"].data.root_pos_w
@@ -207,6 +241,19 @@ class VectorizedBenchmarkRunner:
                     "camera_target_m": params["camera"]["target_m"],
                     "lighting_intensity": float(params["lighting"]["intensity"]),
                 }
+            if controlled_object_pose_b is not None:
+                visual_xyz = controlled_object_pose_b[env_index, :3].detach().cpu()
+                true_xyz = initial_true_object_pose_b[env_index, :3].detach().cpu()
+                row.update(
+                    {
+                        "visual_object_x_m": float(visual_xyz[0]),
+                        "visual_object_y_m": float(visual_xyz[1]),
+                        "visual_object_z_m": float(visual_xyz[2]),
+                        "initial_visual_position_error_m": float(
+                            torch.linalg.vector_norm(visual_xyz - true_xyz)
+                        ),
+                    }
+                )
             if "sampling" in params:
                 sampling = params["sampling"]
                 row.update(

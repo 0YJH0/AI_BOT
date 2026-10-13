@@ -1,0 +1,33 @@
+model: lerobot/smolvla_base
+policy: SmolVLA-450M
+task: Pick up the red cube and lift it 10 centimeters.
+
+observation:
+  image_key: observation.images.table
+  image_source: RGB
+  fps: 10
+  state_dim: 25
+  state_fields: [joint_position_9, joint_velocity_9, eef_pose_xyz_quaternion_wxyz_7]
+  privileged_object_state: false
+
+action:
+  dim: 8
+  representation: absolute_ik_pose_xyz_quaternion_wxyz_plus_gripper
+  execution_horizon: 8
+  isaac_action_repeat: 5
+
+eight_gb_recipe:
+  batch_size: 1
+  steps_first_run: 5000
+  steps_target: 10000
+  peft: LORA
+  lora_rank: 16
+  freeze_vision_encoder: true
+  train_expert_only: true
+  run_training_without_isaac_sim: true
+
+safety:
+  maximum_position_step_m: 0.04
+  grasp_enable_distance_m: 0.075
+  invalid_action_fallback: rgbd_scripted_ik
+  invalid_perception_fallback: rgbd_scripted_ik

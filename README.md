@@ -1,468 +1,211 @@
-# Isaac Lab 机器人操作仿真、并行数据生成与视觉控制
+# ai_BOT：Isaac Lab 机器人抓取、数据生成与学习策略评测
 
-这是一个面向机器人算法与仿真岗位展示的 Isaac Lab 项目。项目围绕 Franka Panda 的 Pick-and-Lift 任务，构建了从物理仿真、Domain Randomization、GPU 并行数据生成，到 BC/DAgger/PPO 训练、分级 Benchmark、Failure Analysis，再到 RGB-D 视觉感知接入控制策略的完整流程。
+以 Franka 抓取桌面红色方块为任务，连接物理仿真、并行数据生成、BC / DAgger / PPO、RGB-D 感知、SmolVLA 微调和闭环 Benchmark。
 
-当前项目已实现：
+本仓库是研究与工程实验项目，不是已验证的通用抓取产品。以下说明更新于 **2026-10-13**，命令使用 **Windows PowerShell**，在仓库根目录执行。每条 Python 命令均写成一行，避免把 PowerShell 反引号续行符粘贴到 CMD。
 
-- 基于 Isaac Lab / Isaac Sim 的 Franka 抓取与原地垂直抬升任务；
-- 物体位置、朝向、质量、摩擦，相机位姿和光照随机化；
-- 向量化 GPU 并行 rollout 与 50 Hz 状态轨迹采集；
-- 10 Hz RGB-D、相机标定和 6DoF 标签同步采集；
-- NPZ/JSON 原始 episode 到分片 HDF5 数据集导出；
-- Scripted IK、Behavior Cloning、DAgger 和 PPO 策略；
-- Easy / Medium / Hard 分级 Benchmark 与 Failure Case 分析；
-- RGB-D 关键点与深度残差网络；
-- `RGB-D → 目标三维位置 → Scripted IK → 10 cm 抬升`视觉闭环；
-- 将视觉预测替换 57 维学习策略中的物体真值观测。
+## 1. 先选择你要演示的内容
 
-## 当前结果
+| Demo | 控制依据 | 是否需要本项目训练权重 | 推荐起点 |
+| --- | --- | --- | --- |
+| Scripted IK | 仿真目标真值 + 阶段控制 + IK | 否 | 首次安装、验证场景和物理 |
+| 视觉 IK | RGB-D 估计目标位置 + 阶段控制 + IK | 需要视觉权重 | 展示视觉感知接入控制 |
+| SmolVLA | RGB、语言、自身状态；本示例另含视觉估计和阶段 | 需要基础模型、LoRA和视觉权重 | 展示模型闭环，不保证每回合成功 |
 
-| 模块 | 结果 |
+“关闭专家回退”不等于“仅图像与语言输入”。下面 v17 示例是30维条件状态、8维动作接口，不能与仓库中 proprio-only、relative4d、joint-action 实验分支混用。
+
+## 2. 环境准备
+
+已运行的本机组合：
+
+| 环境 | 版本与职责 |
 | --- | --- |
-| Scripted IK Benchmark | Easy 100.00%，Medium 99.61%，Hard 93.75% |
-| BC + 2 轮 DAgger | Easy 100.00%，Medium 77.73%，Hard 73.83% |
-| DAgger 初始化后 PPO 微调 | Easy 100.00%，Medium 77.73%，Hard 57.42% |
-| RGB-D 测试集三维误差 | 中位数 1.53 cm，平均 2.73 cm，90.80% 帧在 5 cm 内 |
-| 视觉驱动 Scripted IK | Hard 随机场景 121 步完成，最大抬升 13.38 cm |
-| 自动化测试 | 32 passed |
+| isaaclab23 | Python 3.11、Isaac Sim 5.1.0、Isaac Lab 2.3.2、Torch 2.7.0+cu128 |
+| lerobot-vla | Python 3.11、LeRobot 0.4.4、PEFT 0.18.1、Transformers 4.57.6、Torch 2.11.0+cu128 |
+| 硬件 | Windows、RTX 4060 Laptop 8 GB；这是实测机器，不是普适最低配置保证 |
 
-视觉闭环结果是单场景功能验收，不代表视觉 Benchmark 成功率。视觉观测已经接入 DAgger/PPO actor，但现有 actor 使用无噪声仿真状态训练，单 episode 视觉冒烟测试发生 timeout；后续需要进行 Visual DAgger 或带视觉噪声的策略微调。
+先按 [Isaac Lab 官方安装说明](https://isaac-sim.github.io/IsaacLab/v2.3.1/source/setup/installation/pip_installation.html) 建立对应5.1 / 2.3系列环境并确认Isaac启动。该链接为2.3.1文档，本机实际安装为2.3.2；不同版本请核对兼容性。Isaac首次运行可能下载资产、构建缓存，冷启动明显慢于后续运行。
 
-## 系统流程
+在已能导入Isaac Lab的环境中安装本项目：
 
-```text
-Isaac Sim GPU Physics
-        │
-        ├── Scripted IK ──► 状态/RGB-D 数据采集 ──► HDF5 Dataset
-        │                                           │
-        │                                           ├── BC / DAgger ──► PPO
-        │                                           │
-        │                                           └── RGB-D 视觉模型
-        │                                                     │
-        └── Easy / Medium / Hard Benchmark ◄── 控制策略 ◄─────┘
-                              │
-                              └── Failure Analysis ──► Failure-aware Sampling
-```
-
-## 技术栈与验证环境
-
-| 组件 | 版本 |
-| --- | --- |
-| 操作系统 | Windows 11 |
-| Python | 3.11.16 |
-| Isaac Sim | 5.1.0 |
-| Isaac Lab | 2.3.2 |
-| PyTorch | 2.7.0+cu128 |
-| RSL-RL | 3.1.2 |
-| h5py | 3.14.0 |
-| GPU | NVIDIA GeForce RTX 4060 Laptop GPU，8 GB VRAM |
-
-项目固定使用 `h5py==3.14.0`，以匹配 Isaac Sim 5.1 GUI 插件使用的 HDF5 版本。
-
-## 目录结构
-
-```text
-ai_BOT/
-├── configs/                         # Domain Randomization、Benchmark、PPO 配置
-├── dataset/                         # 原始 NPZ/JSON episode
-├── exports/                         # 分片 HDF5 数据集
-├── results/                         # checkpoint、Benchmark、图表和评测报告
-├── scripts/                         # 采集、训练、评测与可视化入口
-├── src/isaac_lab_data_engine/
-│   ├── controllers/                 # Scripted IK 状态机
-│   ├── data_collection/             # episode writer、HDF5 exporter/reader
-│   ├── envs/                        # Isaac Lab 环境、观测和奖励
-│   ├── benchmark/                   # 分级评测与报告
-│   ├── analysis/                    # Failure Case 分析
-│   ├── randomization/               # Domain Randomization
-│   └── vision/                      # RGB-D 模型、数据集和策略观测适配器
-├── tests/                           # 不启动仿真的单元测试
-└── docs/                            # 各 Phase 的设计与结果
-```
-
-## 1. 环境准备
-
-当前机器已经创建好 Conda 环境 `isaaclab23`。每次打开新的 PowerShell 后先执行：
-
-```powershell
+~~~powershell
 conda activate isaaclab23
-cd C:\Users\yjh\Desktop\work_project\ai_BOT
-$env:OMNI_KIT_ACCEPT_EULA = "YES"
-```
+python -m pip install -e .
+~~~
 
-如果项目包尚未以 editable 模式安装：
+PPO可选依赖：
 
-```powershell
+~~~powershell
 python -m pip install -e ".[ppo]"
-```
+~~~
 
-快速检查 PyTorch 和 CUDA：
+使用者阅读并同意NVIDIA EULA后，才在当前终端设置：
 
-```powershell
-python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
-```
+~~~powershell
+$env:OMNI_KIT_ACCEPT_EULA = "YES"
+~~~
 
-运行全部不依赖 Isaac Sim 窗口的测试：
+不要将Isaac和LeRobot的依赖直接合并到一个环境。当前 requirements-vla.txt 的版本范围与已验证的LeRobot 0.4.4服务入口不一致；不要把“安装该文件”当作已验收的VLA一键安装方案。scripts/setup_vla_env_py311.ps1 可作为历史依赖参考，但包含本机路径，使用前需审阅。
 
-```powershell
-python -m pytest tests -q
-```
+## 3. Demo A：先运行无学习权重的抓取
 
-> 本文命令面向 PowerShell。反引号只能作为 PowerShell 的换行续写符，并且必须放在行尾；在 Anaconda Prompt/CMD 中请把多行命令合并为一行，不要输入反引号。
-
-## 2. 最快运行方式
-
-### 2.1 查看状态真值驱动的 Scripted IK 抓取
-
-```powershell
+~~~powershell
+conda activate isaaclab23
 python scripts\run_pick_lift.py --num_envs 1 --max_steps 600 --realtime --keep_open
-```
+~~~
 
-### 2.2 查看视觉模型驱动的抓取
+你应看到机械臂接近、闭合和抬升的控制过程。此处使用真实物体状态，是场景与专家控制演示，不是视觉或VLA推理。--keep_open 在动作结束后保留GUI；关闭窗口或在启动终端Ctrl+C结束。不要关闭与其他任务共用的终端或批量结束所有python.exe。
 
-```powershell
-python scripts\run_visual_pick_lift.py --device cuda:0 --num-envs 1 --max-steps 600 --realtime --keep-open
-```
+无GUI运行：
 
-该脚本会明确输出：
+~~~powershell
+python scripts\run_pick_lift.py --headless --num_envs 1 --max_steps 600
+~~~
 
-```text
-model: RGBDKeypointPositionNet
-controller_object_source: visual_prediction_only
-simulator_object_truth: metrics_only
-```
+## 4. Demo B：RGB-D 估计位姿 + Scripted IK
 
-也就是说，物体真值只用于计算误差和成功判据，不参与控制动作生成。成功后窗口保持打开，关闭 Isaac Sim 即可结束。
+需要本地视觉权重：
 
-无窗口验收：
+~~~text
+results/vision/rgbd_keypoint_supplement_160x120_v3/best_model.pt
+~~~
 
-```powershell
-python scripts\run_visual_pick_lift.py --headless --device cuda:0 --num-envs 1 --max-steps 600
-```
+显式选择Medium配置，避免脚本默认Hard造成误解：
 
-## 3. 从零复现完整流程
+~~~powershell
+python scripts\run_visual_pick_lift.py --checkpoint results\vision\rgbd_keypoint_supplement_160x120_v3\best_model.pt --randomization-config configs\randomization_medium.yaml --device cuda:0 --num-envs 1 --max-steps 600 --realtime --keep-open
+~~~
 
-下面按项目 Phase 顺序执行。训练或导出脚本通常不覆盖已有的非空输出目录，重复实验时应使用新的目录名。
+模型从RGB-D估计位置，控制器根据估计位姿抓取。看到物体并不代表传感器帧有效；如果初始化失败，先检查相机与估计日志，不要当成抓取策略失败。
 
-### Phase 1：验证场景
+## 5. Demo C：SmolVLA 单环境闭环
 
-启动 Franka、桌面、方块、相机和灯光场景：
+### 5.1 需要哪些文件
 
-```powershell
-python scripts\run_env.py
-```
+本指南采用当前64回合Medium对照中表现最好的v17 r16、chunk=4、连续执行2个动作配置；它不是每次都能成功。
 
-无窗口运行 120 步并保存相机图像：
+~~~text
+results/vla/models/smolvla_base/
+results/vla/training/smolvla_v9_chunk4_20261012_195615_610_v17/checkpoints/006000/pretrained_model/
+results/vision/rgbd_keypoint_supplement_160x120_v3/best_model.pt
+~~~
 
-```powershell
-python scripts\run_env.py --headless --steps 120 --save_camera
-```
+LoRA目录应保留完整配置、adapter权重和预处理/后处理器，不能只复制一个safetensors文件。当前adapter_config.json中的base_model_name_or_path可能指向作者电脑绝对路径；迁移时只在checkpoint副本中将其改为你实际基础模型路径，并保留原版。基础模型来自 [lerobot/smolvla_base](https://huggingface.co/lerobot/smolvla_base)，迁移应保持原基础模型版本；下载最新版本不自动等于历史实验版本。
 
-### Phase 2：Scripted IK Pick-and-Lift
+**当前仓库未提供统一的项目权重下载入口。** 普通克隆通常不包含results、dataset和exports。缺少上述文件时只能先跑Demo A；不能用未微调的基础权重替代后仍称为v17复现。
 
-```powershell
-python scripts\run_pick_lift.py --headless --num_envs 1 --max_steps 600 --save_camera
-```
+### 5.2 终端A：启动模型服务
 
-控制状态机为：
+在仓库根目录，激活单独的LeRobot环境：
 
-```text
-rest → approach above → descend → grasp → lift
-```
+~~~powershell
+conda activate lerobot-vla
+python scripts\serve_smolvla_windows_v044_v4.py --checkpoint results\vla\training\smolvla_v9_chunk4_20261012_195615_610_v17\checkpoints\006000\pretrained_model --device cuda --port 8765 --execution-horizon 4 --seed 20261011 --gpu-memory-fraction 0.35
+~~~
 
-正式成功标准为：物体中心高于桌面 10 cm、夹爪闭合、物体仍靠近末端，并连续保持 10 个控制步。
+等待服务完成模型加载并进入监听，再启动终端B。此处允许服务返回4个动作，实际执行几个由仿真端决定。显存配额只约束该进程的相关Torch分配，不是整机显存隔离保证。请关闭不必要的GPU应用。
 
-### Phase 3：采集单环境状态轨迹
+### 5.3 终端B：启动可视化仿真
 
-```powershell
-python scripts\collect_data.py --headless --num-envs 1 --episodes 1 --max_steps 600 --output_dir dataset\state_single_rerun
-```
+~~~powershell
+conda activate isaaclab23
+$env:OMNI_KIT_ACCEPT_EULA = "YES"
+$DemoOut = "results/demo_vla_" + (Get-Date -Format "yyyyMMdd_HHmmss")
+python scripts\run_vla_benchmark.py --levels medium --episodes-per-level 1 --max-steps 600 --device cuda:0 --vla-port 8765 --vla-timeout 120 --execution-horizon 2 --action-repeat 5 --vla-position-target-mode delta --condition-vla-on-visual-pose --condition-vla-on-controller-phase --minimum-true-lift-m 0.10 --pure-vla --require-vla --realtime --keep-open --output-dir $DemoOut
+~~~
 
-每个 episode 输出：
+默认视觉checkpoint就是5.1节所列路径。要用其他视觉权重，应显式传 --vision-checkpoint 并记录变化。
 
-- `trajectory.npz`：关节位置/速度、末端位姿、物体位姿、动作、奖励和时间戳；
-- `metadata.json`：成功状态、失败类型、步数和数据 schema；
-- `dataset_metadata.json`：数据集级 manifest。
+预期：GUI显示抓取过程，控制台写回合结果，输出目录保存评测记录。无专家回退时失败就应如实记录失败。--require-vla 遇到服务错误会中止；--pure-vla 禁止专家回退，但仍保留视觉/阶段条件与安全限制。任务结束后先结束仿真，再在终端A用Ctrl+C结束推理服务。
 
-### Phase 4：Domain Randomization
+单环境GUI与16环境批量运行的随机调用顺序可能不同，不保证逐回合复现完全相同结果。需要统计复现时使用固定manifest和下面批量流程。
 
-```powershell
-python scripts\collect_data.py --headless --num-envs 8 --episodes 4 --max_steps 600 `
-  --randomization_config configs\randomization_hard.yaml `
-  --output_dir dataset\randomized_hard_rerun
-```
+## 6. 多场景批量验证：先4个，再按显存扩大
 
-Hard 配置随机化物体 x/y/yaw、质量、静动摩擦、恢复系数、相机位姿和光照。
+服务保持终端A的v17配置，终端B使用普通相机。先运行4环境、1波容量与闭环烟测：
 
-### Phase 5：GPU 并行仿真与吞吐测试
+~~~powershell
+$ProbeOut = "results/demo_parallel4_" + (Get-Date -Format "yyyyMMdd_HHmmss")
+python scripts\run_vla_parallel_probe.py --parallel-envs 4 --waves 1 --camera-mode standard --strict-benchmark --headless --rendering_mode performance --device cuda:0 --max-steps 600 --vla-port 8765 --vla-timeout 120 --execution-horizon 2 --action-repeat 5 --vla-position-target-mode delta --condition-vla-on-visual-pose --condition-vla-on-controller-phase --minimum-true-lift-m 0.10 --pure-vla --require-vla --output-dir $ProbeOut
+~~~
 
-采集一批 128 环境轨迹：
+该脚本当前固定选择Medium，支持legacy 30维delta接口，不是任意任务通用并行入口。确认相机全部ready、帧非黑、无RPC错误后，才把 --parallel-envs 改为16、--waves改为4，得到64回合。输出的scene_manifest.json、camera_wave*.json、parallel_report.json用于核对场景、初始化和逐回合结果。
 
-```powershell
-python scripts\collect_data.py --headless --num-envs 128 --episodes 1 --max_steps 600 `
-  --randomization_config configs\randomization_hard.yaml `
-  --output_dir dataset\parallel_128_rerun
-```
+本机16普通相机曾通过，但显存仅剩约557 MiB容量余量；其他GPU应用、分辨率或依赖变化均可能导致失败。16不是推荐给所有8GB机器的默认值。不要省略 --camera-mode standard：脚本默认TiledCamera，而当前配置曾出现Tiled黑帧问题。
 
-单独测量并行仿真吞吐：
+四组自动编排脚本为 scripts/run_vla_medium64_parallel_comparison.ps1，包含作者的Conda和模型路径；在其他机器使用前应先修改路径配置，不建议直接盲跑。
 
-```powershell
-python scripts\run_parallel_benchmark.py --headless --num-envs 128 --max_steps 600 `
-  --randomization_config configs\randomization_hard.yaml
-```
+## 7. 从采集到训练再到测试的路线
 
-### Phase 6：导出 HDF5 数据集
+1. 用Demo A验证物理、IK和终止条件。
+2. 用collect_data采样轨迹；检查相机有效性、时间戳和执行标签。
+3. 用export_dataset导出HDF5并回读；VLA分支使用独立的LeRobot导出与审计。
+4. 状态策略先BC，再按需要DAgger / PPO；视觉模型单独训练；SmolVLA使用独立环境和明确接口微调。
+5. 固定验证集扫描checkpoint；不只看总loss，还看关键阶段、夹爪、Z误差。
+6. 单环境闭环诊断，再相同manifest批量Benchmark；保存分母、失败和协议，禁止只挑成功回合。
 
-```powershell
-python scripts\export_dataset.py `
-  --input-dir dataset\parallel_128_rerun `
-  --output-dir exports\pick_lift_state_rerun `
-  --episodes-per-shard 32
-```
+小规模数据入口示例（不代表复现600条VLA训练集）：
 
-导出结果包含分片 HDF5、`index.csv`、固定 Train/Validation/Test split、统计信息、SHA-256 和逐 tensor 回读校验。
+~~~powershell
+$RawOut = "dataset/demo_state_" + (Get-Date -Format "yyyyMMdd_HHmmss")
+python scripts\collect_data.py --headless --num-envs 1 --episodes 3 --max_steps 600 --output_dir $RawOut
+python scripts\export_dataset.py --input_dir $RawOut --output_dir ($RawOut + "_hdf5") --format hdf5
+~~~
 
-### Phase 7：Easy / Medium / Hard Benchmark
+关键训练入口：
 
-先用少量 episode 做冒烟测试：
-
-```powershell
-python scripts\run_benchmark.py --headless --config configs\benchmark.yaml `
-  --num-envs 8 --episodes_per_level 16 --max_steps 600 `
-  --output_dir results\benchmark_smoke_rerun
-```
-
-正式评测：
-
-```powershell
-python scripts\run_benchmark.py --headless --config configs\benchmark.yaml
-```
-
-默认每个难度 256 个 episode，输出汇总 CSV、逐 episode CSV 和 JSON 报告。
-
-### Phase 8：Failure Case 分析
-
-```powershell
-python scripts\analyze_failure.py `
-  --input results\benchmark\benchmark_episodes.csv `
-  --output-dir results\failure_analysis `
-  --difficulty hard
-```
-
-分析内容包括失败类型、距离/质量/摩擦/yaw 分箱、Wilson 置信区间、失败样本明细和图表。
-
-### Phase 9：Failure-aware Sampling
-
-完整执行“失败分析 → 高风险区域重采样 → 新一轮 Benchmark → 两轮对比”：
-
-```powershell
-python scripts\run_data_loop.py --num-envs 128 --episodes 256
-```
-
-如果前两轮结果已经存在，只重新生成对比报告：
-
-```powershell
-python scripts\run_data_loop.py --reuse-existing
-```
-
-### Phase 10：RGB-D 数据采集与导出
-
-当前视觉训练数据使用 8 个带 RTX 相机的并行环境、8 个同步 batch，共 64 个 episode：
-
-```powershell
-python scripts\collect_data.py --headless --device cuda:0 --enable_cameras `
-  --num-envs 8 --episodes 8 --max_steps 180 --camera_frame_interval 5 `
-  --randomization_config configs\randomization_hard.yaml `
-  --output_dir dataset\rgbd_hard_rerun
-```
-
-状态控制频率为 50 Hz，`camera_frame_interval=5` 对应约 10 Hz RGB-D。
-
-导出视觉 HDF5：
-
-```powershell
-python scripts\export_dataset.py `
-  --input-dir dataset\rgbd_hard_rerun `
-  --output-dir exports\pick_lift_rgbd_hard_rerun `
-  --episodes-per-shard 16
-```
-
-可视化一个原始 RGB-D episode 的相机、物体和末端轨迹：
-
-```powershell
-python scripts\visualize_rgbd_episode.py `
-  --episode-dir dataset\rgbd_hard_rerun\episode_000001 `
-  --output results\rgbd_hard_rerun_trajectory.png
-```
-
-### Phase 11：BC、DAgger 和 PPO
-
-#### 11.1 收集 Scripted IK 示范并训练 BC + DAgger
-
-推荐先用小规模参数验证命令：
-
-```powershell
-python scripts\train_bc_warmstart.py --headless --device cuda:0 `
-  --num-envs 64 --horizon 220 --levels easy medium hard `
-  --epochs 3 --batch-size 2048 --lift-delta-m 0.15 `
-  --dagger-rounds 1 --dagger-epochs 2 `
-  --output-dir results\ppo\bc_dagger_smoke_rerun
-```
-
-正式训练配置：
-
-```powershell
-python scripts\train_bc_warmstart.py --headless --device cuda:0 `
-  --num-envs 1024 --horizon 220 --levels easy medium hard `
-  --epochs 30 --batch-size 8192 --lift-delta-m 0.15 `
-  --dagger-rounds 2 --dagger-epochs 10 `
-  --dagger-initial-teacher-probability 0.5 `
-  --output-dir results\ppo\bc_dagger2_rerun
-```
-
-训练数据含 57 维策略观测和 8 维绝对 IK 动作。两轮 DAgger 会在 student 实际访问的偏离状态上重新请求 Scripted IK 教师动作，降低纯离线 BC 的闭环分布偏移。
-
-#### 11.2 评测 BC/DAgger checkpoint
-
-```powershell
-python scripts\evaluate_ppo.py --headless --device cuda:0 --action-space ik_abs `
-  --checkpoint results\ppo\bc_dagger2_rerun\model_bc.pt `
-  --num-envs 128 --episodes-per-level 256 --max-steps 600 `
-  --output-dir results\ppo_evaluation_bc_dagger2_rerun
-```
-
-#### 11.3 从 DAgger checkpoint 继续 PPO 微调
-
-```powershell
-python scripts\train_ppo.py --headless --device cuda:0 --action-space ik_abs `
-  --num-envs 1024 --iterations 20 `
-  --action-noise-std 0.005 --learning-rate 0.000001 `
-  --resume-checkpoint results\ppo\bc_dagger2_rerun\model_bc.pt `
-  --run-name ik_abs_dagger2_ppo_rerun
-```
-
-`--iterations` 表示额外 PPO 更新次数。输出目录由 `configs/ppo.yaml` 中的 `output_root` 和 `--run-name` 共同决定。
-
-#### 11.4 评测 PPO checkpoint
-
-```powershell
-python scripts\evaluate_ppo.py --headless --device cuda:0 --action-space ik_abs `
-  --checkpoint results\ppo\ik_abs_dagger2_ppo_rerun\model_20.pt `
-  --num-envs 128 --episodes-per-level 256 --max-steps 600 `
-  --output-dir results\ppo_evaluation_ik_abs_dagger2_ppo_rerun
-```
-
-不要只看训练 reward；最终模型选择必须依据独立 Easy/Medium/Hard Benchmark。当前 20 轮 PPO 在 Hard 上由 73.83% 下降到 57.42%，说明存在 on-policy catastrophic forgetting，因此项目同时保留最佳 DAgger 和 PPO checkpoint。
-
-### Phase 12：训练视觉模型并接入控制
-
-#### 12.1 训练 RGB-D 关键点模型
-
-使用已导出的视觉数据：
-
-```powershell
-python scripts\train_visual_keypoint.py `
-  --dataset-dir exports\pick_lift_rgbd_hard_rerun `
-  --output-dir results\vision\rgbd_keypoint_rerun `
-  --epochs 50 --batch-size 128 --device cuda:0
-```
-
-网络执行：
-
-```text
-RGB-D → 2D 物体中心热力图
-      → RTX 表面深度 + 网络深度残差
-      → 相机内参反投影
-      → camera xyz
-```
-
-当前正式 checkpoint：
-
-```text
-results/vision/rgbd_keypoint_depth_residual_hard_v2/best_model.pt
-```
-
-#### 12.2 视觉模型接入 Scripted IK
-
-```powershell
-python scripts\run_visual_pick_lift.py --headless --device cuda:0 `
-  --checkpoint results\vision\rgbd_keypoint_rerun\best_model.pt `
-  --randomization-config configs\randomization_hard.yaml `
-  --num-envs 1 --max-steps 600
-```
-
-GUI 演示：
-
-```powershell
-python scripts\run_visual_pick_lift.py --device cuda:0 `
-  --checkpoint results\vision\rgbd_keypoint_rerun\best_model.pt `
-  --num-envs 1 --max-steps 600 --realtime --keep-open
-```
-
-视觉控制使用已知工作空间掩码、REST 阶段多帧 EMA 和遮挡前目标锁定。仿真物体真值只用于输出定位误差和判断是否完成 10 cm 抬升。
-
-#### 12.3 将视觉观测接入 DAgger/PPO actor
-
-```powershell
-python scripts\evaluate_ppo.py --headless --device cuda:0 `
-  --checkpoint results\ppo\bc_dagger2_adaptive_contact_vertical_ik_abs_1024env\model_bc.pt `
-  --action-space ik_abs `
-  --visual-checkpoint results\vision\rgbd_keypoint_depth_residual_hard_v2\best_model.pt `
-  --levels hard --num-envs 1 --episodes-per-level 1 --max-steps 600 `
-  --output-dir results\visual_policy_evaluation\dagger_hard_rerun
-```
-
-`VisualPolicyObservationAdapter` 会用视觉预测重新计算以下 57 维观测项：
-
-- object position；
-- object pose 中的位置，未知朝向使用单位四元数；
-- object position in end-effector frame；
-- grasp state features；
-- adaptive manipulation phase。
-
-当前这里只证明视觉观测已经进入 actor。要提高视觉学习策略的成功率，需要采集视觉预测下的 student-visited states，执行 Visual DAgger 再训练。
-
-## 4. 已有 checkpoint 和结果
-
-| 内容 | 路径 |
+| 工作 | 入口 / 资料 |
 | --- | --- |
-| 当前最佳 DAgger | `results/ppo/bc_dagger2_adaptive_contact_vertical_ik_abs_1024env/model_bc.pt` |
-| PPO 微调模型 | `results/ppo/ik_abs_dagger2_adaptive_vertical_ppo_1024env_20iter/model_20.pt` |
-| RGB-D 视觉模型 | `results/vision/rgbd_keypoint_depth_residual_hard_v2/best_model.pt` |
-| 视觉训练报告 | `results/vision/rgbd_keypoint_depth_residual_hard_v2/summary.json` |
-| 视觉闭环报告 | `results/vision/visual_control_smoke_summary.json` |
-| Scripted IK Benchmark | `results/benchmark/` |
-| Failure Analysis | `results/failure_analysis/` |
+| BC / DAgger | scripts/train_bc_warmstart.py |
+| PPO | scripts/train_ppo.py；scripts/evaluate_ppo.py |
+| RGB-D感知 | scripts/train_visual_keypoint.py |
+| VLA训练 | scripts/lerobot_train_windows.py |
+| 执行对齐VLA导出 | scripts/export_vla_execution_aligned.py；audit_vla_execution_aligned_export.py |
+| 完整历史训练命令 | [归档README](docs/archive/README_before_reports_20261013.md) |
 
-## 5. 常见问题
+历史训练命令依赖相应数据、权重和本机路径，不是新环境的一键复现承诺。本次文档整理没有重新启动训练；若复现训练，应新建run名和输出目录，保留旧权重。
 
-### 命令提示 `unrecognized arguments: \``
+## 8. 已核验结果
 
-反引号是 PowerShell 的续行符，不是脚本参数。它必须放在 PowerShell 行尾；如果使用 Anaconda Prompt/CMD，请将整条命令写在一行。
+| 实验 | 结果 | 关键限制 |
+| --- | --- | --- |
+| Scripted IK Hard | 240/256，93.75% | 目标真值；物体中心高于桌面10cm |
+| PPO + BC，128步rollout，Hard | 229/256，89.45% | 目标真值；与上项同类高度判据；最大步数不同 |
+| v18 r32 / H=1，Medium | 10/64，15.63% | 视觉/阶段条件；实际抬升10cm |
+| v17 r16 / H=1，Medium | 8/64，12.50% | 同上 |
+| v17 r16 / H=2，Medium | 14/64，21.88% | 本次固定样本最佳，非普遍最优结论 |
+| v17 r16 / H=4，Medium | 7/64，10.94% | 更少推理调用不等于更高成功率 |
 
-### GUI 首次加载很慢
+PPO训练计数为1024×128×100=13,107,200 transitions。v9完整示范集为600条成功轨迹，Easy/Medium/Hard各200，导出划分510/45/45。VLA结果不是RGB-only结果；状态策略与VLA成功率不具有直接公平可比性。r32与r16训练历史不同，不是纯秩消融。
 
-Isaac Sim 需要初始化 Kit、RTX shader、USD 资源和相机扩展。第一次通常最慢；后续启动会利用缓存。纯状态训练和大规模并行 rollout 默认关闭相机，以减少 RTX 开销。
+最新四组原始结果位于 results/vla/medium64_parallel16_20261013_160323_916/。已随报告保存关键证据摘要及原始JSON哈希。
 
-### 8 GB 显存能否使用 1024 个并行环境
+## 9. 常见问题
 
-无相机的低维状态环境已经完成 1024 并行 BC/DAgger/PPO 实验。带 RGB-D 相机时显存和渲染开销显著增加，当前视觉数据采集使用 8 个相机环境，不应直接套用 1024 环境配置。
+- **config.json找不到**：先检查checkpoint目录层级和完整性；torchcodec回退pyav通常不是致命原因。
+- **端口已占用**：用 Get-NetTCPConnection -LocalPort 8765 查看进程；识别后处理本项目残留服务，或让两个终端共同改用空闲端口。不结束不明进程。
+- **图像全黑**：分别检查RGB标准差、深度有效率、新帧编号和连续有效窗口。单纯延长等待不保证解决；当前批量示例显式使用普通Camera。
+- **窗口像卡住**：先看是否在等待同步推理或初始化，以及日志是否报RPC超时。仿真50Hz不意味着墙钟50Hz。
+- **提前闭合**：区分模型请求、保护器过滤、实际夹爪状态；检查动作归一化、阶段与标签，不直接归因于模型小。
+- **输出不再刷新**：Get-Content -Wait会持续等待同一个文件，不自动切换下一组日志；先看pipeline_status.json的stage/current_arm。
+- **6000steps不是6000epoch**：等效遍历次数取决于训练帧数、batch、累积及采样方式。
+- **16环境显存不足**：退回4或1环境；同一模型共享权重仍需要各环境渲染与特征内存。
 
-### 为什么视觉 DAgger/PPO 目前不如视觉 Scripted IK
+不依赖启动Isaac的基础逻辑测试（需安装pytest并可导入本项目）：
 
-现有 actor 在精确仿真物体状态上训练，而部署时输入包含视觉误差、遮挡、缺失朝向和时间相关噪声，产生 observation distribution shift。Scripted IK 对厘米级目标误差更容易加入显式约束；学习策略需要 Visual DAgger、观测噪声训练或端到端视觉策略微调。
+~~~powershell
+python -m pytest tests/test_vla_batch_execution.py tests/test_vla_batch_rpc.py tests/test_vla_visual_initialization.py
+~~~
 
-## 6. 详细文档
+## 10. 项目报告
 
-- `docs/phase1_scene.md`：场景资产与坐标系；
-- `docs/phase2_pick_and_lift.md`：Scripted IK；
-- `docs/phase3_single_environment_collection.md`：单环境采集；
-- `docs/phase4_domain_randomization.md`：随机化参数；
-- `docs/phase5_vectorized_parallel_simulation.md`：GPU 并行；
-- `docs/phase6_dataset_export.md`：HDF5 schema；
-- `docs/phase7_benchmark.md`：分级 Benchmark；
-- `docs/phase8_failure_analysis.md`：失败分析；
-- `docs/phase9_failure_aware_sampling.md`：闭环采样；
-- `docs/phase10_rgbd_data.md`：RGB-D 数据；
-- `docs/phase11_ppo.md`：BC、DAgger、PPO；
-- `docs/phase12_visual_perception_control.md`：视觉模型与控制接入。
+| 报告 | Markdown | PDF |
+| --- | --- | --- |
+| 挑战点：难点、解决与边界 | [阅读](docs/reports_20261013/01_project_challenges.md) | [下载](output/pdf/01_project_challenges.pdf) |
+| 问题报告：通信、初始化、数据与评测 | [阅读](docs/reports_20261013/02_project_issue_report.md) | [下载](output/pdf/02_project_issue_report.pdf) |
+| 总述：结构、功能与量化结果 | [阅读](docs/reports_20261013/03_project_overview.md) | [下载](output/pdf/03_project_overview.pdf) |
+| 1小时介绍：讲稿、演示与问答 | [阅读](docs/reports_20261013/04_project_one_hour_talk.md) | [下载](output/pdf/04_project_one_hour_talk.pdf) |
+
+[证据摘要](docs/reports_20261013/evidence_snapshot.json) · [报告说明](docs/reports_20261013/README.md) · [历史README完整归档](docs/archive/README_before_reports_20261013.md)
+
+正式面向社区发布前，仍需项目维护者确认代码许可证、数据/权重分发许可、权重下载与基础模型版本清单，并在干净机器验收安装。当前不擅自声明MIT等许可证，也不将本机测试成功等同于任意机器开箱即用。

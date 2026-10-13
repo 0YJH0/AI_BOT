@@ -32,6 +32,18 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--config", type=Path, default=ROOT / "configs" / "ppo.yaml")
 parser.add_argument("--iterations", type=int, default=None)
 parser.add_argument("--num-envs", type=int, default=None)
+parser.add_argument(
+    "--num-steps-per-env",
+    type=int,
+    default=None,
+    help="Override the rollout horizon from the project config.",
+)
+parser.add_argument(
+    "--save-interval",
+    type=int,
+    default=None,
+    help="Save an intermediate checkpoint every N PPO iterations.",
+)
 parser.add_argument("--run-name", default=None)
 parser.add_argument(
     "--action-space",
@@ -57,6 +69,25 @@ parser.add_argument(
     default=None,
     help="Resume optimizer and policy state; --iterations is the number of additional updates.",
 )
+parser.add_argument(
+    "--load-optimizer",
+    action="store_true",
+    help="Restore optimizer state when resuming an actual PPO run. Leave disabled for BC/DAgger warm starts.",
+)
+parser.add_argument(
+    "--bc-teacher-checkpoint",
+    type=Path,
+    default=None,
+    help="Frozen BC/DAgger checkpoint used for the on-policy auxiliary behavior-cloning loss.",
+)
+parser.add_argument("--bc-loss-coef", type=float, default=0.05)
+parser.add_argument("--bc-num-mini-batches", type=int, default=4)
+parser.add_argument(
+    "--learning-rate-schedule",
+    choices=("adaptive", "fixed"),
+    default=None,
+    help="Override PPO's learning-rate schedule. Fixed is recommended for conservative BC fine-tuning.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.enable_cameras = False
@@ -80,6 +111,7 @@ try:
         PickLiftPPOEnvCfg,
         configure_parallel_physx_capacity,
     )
+    from isaac_lab_data_engine.training import FrozenTeacherBCAuxiliary
 except BaseException:
     traceback.print_exc()
     simulation_app.close()
@@ -117,13 +149,21 @@ def main() -> None:
 
     agent_cfg = LiftCubePPORunnerCfg()
     agent_cfg.seed = seed
-    agent_cfg.num_steps_per_env = int(project_cfg["num_steps_per_env"])
+    num_steps_per_env = args.num_steps_per_env or int(project_cfg["num_steps_per_env"])
+    if num_steps_per_env < 1:
+        raise ValueError("num-steps-per-env must be positive")
+    agent_cfg.num_steps_per_env = num_steps_per_env
     agent_cfg.max_iterations = iterations
-    agent_cfg.save_interval = min(int(project_cfg["save_interval"]), max(iterations, 1))
+    requested_save_interval = args.save_interval or int(project_cfg["save_interval"])
+    if requested_save_interval < 1:
+        raise ValueError("save-interval must be positive")
+    agent_cfg.save_interval = min(requested_save_interval, max(iterations, 1))
     if args.learning_rate is not None:
         if args.learning_rate <= 0.0:
             raise ValueError("learning-rate must be positive")
         agent_cfg.algorithm.learning_rate = args.learning_rate
+    if args.learning_rate_schedule is not None:
+        agent_cfg.algorithm.schedule = args.learning_rate_schedule
     agent_dict = agent_cfg.to_dict()
     (output_dir / "agent_config.yaml").write_text(
         yaml.safe_dump(agent_dict, sort_keys=False), encoding="utf-8"
@@ -141,11 +181,48 @@ def main() -> None:
         resume_checkpoint = args.resume_checkpoint.resolve()
         if not resume_checkpoint.is_file():
             raise FileNotFoundError(resume_checkpoint)
-        runner.load(str(resume_checkpoint), load_optimizer=True, map_location=args.device)
+        runner.load(
+            str(resume_checkpoint),
+            load_optimizer=args.load_optimizer,
+            map_location=args.device,
+        )
         # RSL-RL checkpoints store the last completed zero-based iteration.
         # Advance once so a resumed run does not repeat that optimizer update.
         runner.current_learning_iteration += 1
         start_iteration = runner.current_learning_iteration
+    # torch.optim.load_state_dict restores the checkpoint's parameter-group
+    # learning rate. Reapply the explicit experiment value after loading so a
+    # BC checkpoint cannot silently replace 1e-6 with its saved 1e-4 setting.
+    runner.alg.learning_rate = float(agent_cfg.algorithm.learning_rate)
+    for parameter_group in runner.alg.optimizer.param_groups:
+        parameter_group["lr"] = runner.alg.learning_rate
+
+    bc_teacher_checkpoint = None
+    if args.bc_teacher_checkpoint is not None:
+        if args.action_space != "ik_abs":
+            raise ValueError("BC auxiliary loss currently requires --action-space ik_abs")
+        if args.bc_loss_coef <= 0.0 or args.bc_num_mini_batches < 1:
+            raise ValueError("BC loss coefficient and mini-batch count must be positive")
+        bc_teacher_checkpoint = args.bc_teacher_checkpoint.resolve()
+        if not bc_teacher_checkpoint.is_file():
+            raise FileNotFoundError(bc_teacher_checkpoint)
+        teacher_payload = torch.load(
+            bc_teacher_checkpoint, map_location=args.device, weights_only=False
+        )
+        # deepcopy preserves the resolved observation groups and architecture;
+        # loading the requested checkpoint then makes the teacher independent
+        # of the PPO warm-start source.
+        import copy
+
+        teacher_policy = copy.deepcopy(runner.alg.policy)
+        teacher_policy.load_state_dict(teacher_payload["model_state_dict"])
+        bc_auxiliary = FrozenTeacherBCAuxiliary(
+            teacher_policy,
+            coefficient=args.bc_loss_coef,
+            num_mini_batches=args.bc_num_mini_batches,
+            max_grad_norm=agent_cfg.algorithm.max_grad_norm,
+        )
+        bc_auxiliary.wrap_update(runner.alg)
     action_noise_std = args.action_noise_std
     if action_noise_std is None and args.action_space == "ik_abs":
         action_noise_std = 0.05
@@ -187,7 +264,15 @@ def main() -> None:
         "action_space": args.action_space,
         "action_noise_std": action_noise_std,
         "learning_rate": agent_cfg.algorithm.learning_rate,
+        "effective_optimizer_learning_rate": runner.alg.optimizer.param_groups[0]["lr"],
+        "learning_rate_schedule": agent_cfg.algorithm.schedule,
         "num_steps_per_env": agent_cfg.num_steps_per_env,
+        "save_interval": agent_cfg.save_interval,
+        "bc_teacher_checkpoint": (
+            str(bc_teacher_checkpoint) if bc_teacher_checkpoint is not None else None
+        ),
+        "bc_loss_coefficient": args.bc_loss_coef if bc_teacher_checkpoint else 0.0,
+        "bc_num_mini_batches": args.bc_num_mini_batches if bc_teacher_checkpoint else 0,
         "training_transitions": num_envs * agent_cfg.num_steps_per_env * iterations,
         "wall_time_s": wall_time,
         "transitions_per_second": (

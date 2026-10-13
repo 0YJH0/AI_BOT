@@ -180,6 +180,17 @@ def _patch_visual_observations(
     return observations
 
 
+def _policy_tensor(observations: Any) -> torch.Tensor:
+    if isinstance(observations, torch.Tensor):
+        return observations
+    try:
+        return observations["policy"]
+    except (KeyError, TypeError) as error:
+        raise TypeError(
+            f"Unsupported RSL observation container: {type(observations).__name__}"
+        ) from error
+
+
 def _run_batch(
     env: ManagerBasedRLEnv,
     wrapped: RslRlVecEnvWrapper,
@@ -239,6 +250,13 @@ def _run_batch(
                     visual_position = visual_adapter.filter_position(
                         _visual_position_b(env, visual_estimator)
                     )
+                # After the gripper closes, the arm occludes the cube. Track
+                # the latched visual position with measured end-effector
+                # translation so the actor can observe lift progress without
+                # simulator object state.
+                visual_position = visual_adapter.propagate_held_position(
+                    _policy_tensor(observations), visual_position
+                )
                 elapsed = env.episode_length_buf.float() * env.step_dt
                 observations = _patch_visual_observations(
                     observations, visual_adapter, visual_position, elapsed

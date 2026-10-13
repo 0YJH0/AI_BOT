@@ -2,10 +2,33 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.pytest_tmp/
+.tmp/
+.tmp_pytest*/
+.warp_cache*/
+test_artifacts/
+tmp/
+
+# Local report-building dependencies and rendered QA intermediates.
+.tmp/report_tools/
+tmp/pdfs/reports_20261013/
 
 _deps/*.partial
+_deps/*.whl
 dataset/
+exports/
 logs/
+
+# Model checkpoints and local credentials must not be published with source.
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+.env
+.env.*
+!.env.example
+*.pem
+*.key
 
 results/*
 !results/phase1/

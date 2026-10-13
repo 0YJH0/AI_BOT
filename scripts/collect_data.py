@@ -40,6 +40,48 @@ parser.add_argument(
     default=5,
     help="When cameras are enabled, save one RGB-D frame every N control steps (default: 5).",
 )
+parser.add_argument(
+    "--camera_ready_attempts",
+    type=int,
+    default=8,
+    help="Maximum render/update attempts used to reject stale or blank camera frames.",
+)
+parser.add_argument(
+    "--camera_min_rgb_std",
+    type=float,
+    default=10.0,
+    help="Minimum per-environment RGB standard deviation required before recording.",
+)
+parser.add_argument(
+    "--camera_min_rgb_range",
+    type=float,
+    default=32.0,
+    help="Minimum per-environment RGB dynamic range required before recording.",
+)
+parser.add_argument(
+    "--camera_min_depth_fraction",
+    type=float,
+    default=0.10,
+    help="Minimum fraction of finite positive depth pixels required before recording.",
+)
+parser.add_argument(
+    "--camera_warmup_steps",
+    type=int,
+    default=60,
+    help="Maximum unrecorded control steps used to obtain consecutive valid camera frames.",
+)
+parser.add_argument(
+    "--camera_warmup_consecutive_frames",
+    type=int,
+    default=3,
+    help="Consecutive valid rendered frames required before an episode is recorded.",
+)
+parser.add_argument(
+    "--camera_batch_retries",
+    type=int,
+    default=5,
+    help="Number of full reset/randomize retries after a camera-quality rejection.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -100,12 +142,178 @@ def _cpu_numpy(tensor: torch.Tensor):
     return tensor.detach().cpu().numpy()
 
 
+def _camera_rgb_quality(rgb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return a conservative per-environment blank-frame quality check."""
+
+    if rgb.ndim != 4 or rgb.shape[-1] < 3:
+        raise RuntimeError(f"Expected batched RGB/RGBA tensor, got shape {tuple(rgb.shape)}")
+    rgb_float = rgb[..., :3].to(dtype=torch.float32)
+    flattened = rgb_float.reshape(rgb_float.shape[0], -1)
+    rgb_std = flattened.std(dim=1, unbiased=False)
+    rgb_range = flattened.amax(dim=1) - flattened.amin(dim=1)
+    finite = torch.isfinite(flattened).all(dim=1)
+    return rgb_std, rgb_range, finite
+
+
+class CameraQualityError(RuntimeError):
+    """Raised when an RGB-D batch cannot be made safe to record."""
+
+
+def _read_camera_snapshot_until_ready(
+    env: ManagerBasedRLEnv,
+    *,
+    max_attempts: int,
+    minimum_rgb_std: float,
+    minimum_rgb_range: float,
+    minimum_depth_fraction: float,
+    minimum_attempts: int,
+    render_before_first: bool,
+) -> tuple[dict[str, torch.Tensor], dict[str, float | int]]:
+    """Read valid per-env camera rows, retrying only rows whose annotators dropped."""
+
+    camera = env.scene["table_camera"]
+    if minimum_attempts < 1 or minimum_attempts > max_attempts:
+        raise ValueError("minimum_attempts must be within [1, max_attempts]")
+    accepted = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    accepted_std = torch.full((env.num_envs,), float("nan"), device=env.device)
+    accepted_range = torch.full((env.num_envs,), float("nan"), device=env.device)
+    accepted_depth_fraction = torch.full((env.num_envs,), float("nan"), device=env.device)
+    snapshot: dict[str, torch.Tensor] | None = None
+    last_std: torch.Tensor | None = None
+    last_range: torch.Tensor | None = None
+    last_depth_fraction: torch.Tensor | None = None
+    last_valid: torch.Tensor | None = None
+    for attempt in range(1, max_attempts + 1):
+        if render_before_first or attempt > 1:
+            env.sim.render()
+            camera.update(0.0, force_recompute=True)
+        camera_data = camera.data
+        current = {
+            "rgb": camera_data.output["rgb"],
+            "depth": camera_data.output["distance_to_image_plane"],
+            "intrinsics": camera_data.intrinsic_matrices,
+            "camera_pose": torch.cat((camera_data.pos_w, camera_data.quat_w_ros), dim=-1),
+        }
+        last_std, last_range, rgb_finite = _camera_rgb_quality(current["rgb"])
+        depth = current["depth"].to(dtype=torch.float32).reshape(env.num_envs, -1)
+        depth_valid = torch.isfinite(depth) & (depth > 0.0)
+        last_depth_fraction = depth_valid.to(dtype=torch.float32).mean(dim=1)
+        intrinsics = current["intrinsics"]
+        camera_pose = current["camera_pose"]
+        sensor_state_valid = (
+            torch.isfinite(intrinsics).reshape(env.num_envs, -1).all(dim=1)
+            & (intrinsics[:, 0, 0] > 0.0)
+            & (intrinsics[:, 1, 1] > 0.0)
+            & torch.isfinite(camera_pose).all(dim=1)
+        )
+        quaternion_norm = torch.linalg.vector_norm(camera_pose[:, 3:7], dim=1)
+        sensor_state_valid &= (quaternion_norm > 0.5) & (quaternion_norm < 1.5)
+        last_valid = (
+            rgb_finite
+            & (last_std >= minimum_rgb_std)
+            & (last_range >= minimum_rgb_range)
+            & (last_depth_fraction >= minimum_depth_fraction)
+            & sensor_state_valid
+        )
+        if snapshot is None:
+            snapshot = {key: torch.empty_like(value) for key, value in current.items()}
+        newly_valid = last_valid & ~accepted
+        if bool(newly_valid.any()):
+            for key, value in current.items():
+                snapshot[key][newly_valid] = value[newly_valid].clone()
+            accepted_std[newly_valid] = last_std[newly_valid]
+            accepted_range[newly_valid] = last_range[newly_valid]
+            accepted_depth_fraction[newly_valid] = last_depth_fraction[newly_valid]
+            accepted |= newly_valid
+        if attempt >= minimum_attempts and bool(accepted.all()):
+            return snapshot, {
+                "attempts": attempt,
+                "forced_renders": attempt if render_before_first else attempt - 1,
+                "minimum_rgb_std": float(accepted_std.min().item()),
+                "minimum_rgb_range": float(accepted_range.min().item()),
+                "minimum_depth_fraction": float(accepted_depth_fraction.min().item()),
+            }
+
+    assert (
+        last_std is not None
+        and last_range is not None
+        and last_depth_fraction is not None
+        and last_valid is not None
+    )
+    invalid_ids = torch.nonzero(~accepted, as_tuple=False).squeeze(-1).cpu().tolist()
+    std_values = last_std.detach().cpu().tolist()
+    range_values = last_range.detach().cpu().tolist()
+    depth_values = last_depth_fraction.detach().cpu().tolist()
+    raise CameraQualityError(
+        "Camera remained blank/stale after "
+        f"{max_attempts} reads; unresolved envs={invalid_ids}, "
+        f"last_rgb_std={std_values}, last_rgb_range={range_values}, "
+        f"last_depth_fraction={depth_values}. "
+        "No episodes from this batch were written."
+    )
+
+
+def _advance_camera_warmup(
+    env: ManagerBasedRLEnv,
+    hold_action: torch.Tensor,
+    *,
+    maximum_control_steps: int,
+    required_consecutive_frames: int,
+    minimum_rgb_std: float,
+    minimum_rgb_range: float,
+    minimum_depth_fraction: float,
+) -> dict[str, float | int]:
+    """Advance unrecorded simulation steps until RTX output is stably valid."""
+
+    consecutive = 0
+    last_event: dict[str, float | int] | None = None
+    last_error: CameraQualityError | None = None
+    for warmup_step in range(1, maximum_control_steps + 1):
+        env.step(hold_action)
+        try:
+            _, last_event = _read_camera_snapshot_until_ready(
+                env,
+                max_attempts=1,
+                minimum_rgb_std=minimum_rgb_std,
+                minimum_rgb_range=minimum_rgb_range,
+                minimum_depth_fraction=minimum_depth_fraction,
+                minimum_attempts=1,
+                render_before_first=False,
+            )
+            consecutive += 1
+        except CameraQualityError as exc:
+            last_error = exc
+            consecutive = 0
+        if consecutive >= required_consecutive_frames:
+            # Warm-up steps are outside the recorded episode horizon.
+            env.episode_length_buf.zero_()
+            assert last_event is not None
+            return {
+                **last_event,
+                "warmup_control_steps": warmup_step,
+                "warmup_consecutive_frames": consecutive,
+            }
+
+    detail = f" Last check: {last_error}" if last_error is not None else ""
+    raise CameraQualityError(
+        "Camera did not produce "
+        f"{required_consecutive_frames} consecutive valid frames within "
+        f"{maximum_control_steps} unrecorded control steps.{detail}"
+    )
+
+
 def _collect_batch(
     env: ManagerBasedRLEnv,
     env_cfg: PickLiftEnvCfg,
     max_steps: int,
     randomizer: DomainRandomizer | None,
     camera_frame_interval: int,
+    camera_ready_attempts: int,
+    camera_min_rgb_std: float,
+    camera_min_rgb_range: float,
+    camera_min_depth_fraction: float,
+    camera_warmup_steps: int,
+    camera_warmup_consecutive_frames: int,
 ) -> tuple[
     list[
         tuple[
@@ -131,12 +339,34 @@ def _collect_batch(
         eye = torch.tensor((1.60, -2.00, 1.65), device=env.device).repeat(env.num_envs, 1)
         target = torch.tensor((0.25, 0.0, 0.85), device=env.device).repeat(env.num_envs, 1)
         camera.set_world_poses_from_view(env.scene.env_origins + eye, env.scene.env_origins + target)
+    if camera_enabled:
+        camera = env.scene["table_camera"]
         env.sim.forward()
         camera.reset()
     state_machine = PickAndLiftStateMachine(
         dt=env.step_dt, num_envs=env.num_envs, device=env.device
     )
-
+    ee_pose_b, _ = _task_poses(env)
+    actions = torch.cat(
+        (
+            ee_pose_b,
+            torch.full((env.num_envs, 1), state_machine.OPEN_GRIPPER, device=env.device),
+        ),
+        dim=-1,
+    )
+    camera_quality_events: list[dict[str, float | int]] = []
+    if camera_enabled:
+        warmup_event = _advance_camera_warmup(
+            env,
+            actions,
+            maximum_control_steps=camera_warmup_steps,
+            required_consecutive_frames=camera_warmup_consecutive_frames,
+            minimum_rgb_std=camera_min_rgb_std,
+            minimum_rgb_range=camera_min_rgb_range,
+            minimum_depth_fraction=camera_min_depth_fraction,
+        )
+        camera_quality_events.append(warmup_event)
+    # Re-read the hold pose after the unrecorded settling period.
     ee_pose_b, _ = _task_poses(env)
     actions = torch.cat(
         (
@@ -241,13 +471,21 @@ def _collect_batch(
                 step == 1 or step % camera_frame_interval == 0 or bool(newly_done.any())
             )
             if capture_camera:
-                camera = env.scene["table_camera"]
-                rgb_cpu = _cpu_numpy(camera.data.output["rgb"])
-                depth_cpu = _cpu_numpy(camera.data.output["distance_to_image_plane"])
-                intrinsics_cpu = _cpu_numpy(camera.data.intrinsic_matrices)
-                camera_pose_cpu = _cpu_numpy(
-                    torch.cat((camera.data.pos_w, camera.data.quat_w_ros), dim=-1)
+                camera_snapshot, camera_event = _read_camera_snapshot_until_ready(
+                    env,
+                    max_attempts=camera_ready_attempts,
+                    minimum_rgb_std=camera_min_rgb_std,
+                    minimum_rgb_range=camera_min_rgb_range,
+                    minimum_depth_fraction=camera_min_depth_fraction,
+                    minimum_attempts=1,
+                    render_before_first=False,
                 )
+                if int(camera_event["forced_renders"]) > 0:
+                    camera_quality_events.append(camera_event)
+                rgb_cpu = _cpu_numpy(camera_snapshot["rgb"])
+                depth_cpu = _cpu_numpy(camera_snapshot["depth"])
+                intrinsics_cpu = _cpu_numpy(camera_snapshot["intrinsics"])
+                camera_pose_cpu = _cpu_numpy(camera_snapshot["camera_pose"])
                 object_pose_w_cpu = _cpu_numpy(
                     torch.cat(
                         (
@@ -347,6 +585,18 @@ def _collect_batch(
             },
             "camera_data": camera_enabled,
             "camera_frame_interval": camera_frame_interval if camera_enabled else None,
+            "camera_quality_gate": (
+                {
+                    "minimum_rgb_std": camera_min_rgb_std,
+                    "minimum_rgb_range": camera_min_rgb_range,
+                    "minimum_depth_fraction": camera_min_depth_fraction,
+                    "maximum_refresh_attempts": camera_ready_attempts,
+                    "maximum_warmup_control_steps": camera_warmup_steps,
+                    "required_consecutive_warmup_frames": camera_warmup_consecutive_frames,
+                }
+                if camera_enabled
+                else None
+            ),
             "camera_coordinate_conventions": (
                 {
                     "camera_pose_w": "ROS optical camera frame in world; xyz + quaternion wxyz",
@@ -377,6 +627,26 @@ def _collect_batch(
         "simulation_fps": vector_steps / rollout_wall_time_s,
         "environment_steps_per_second": environment_transitions / rollout_wall_time_s,
         "episodes_per_minute": env.num_envs * 60.0 / rollout_wall_time_s,
+        "camera_refresh_events": len(camera_quality_events),
+        "camera_refresh_attempts_total": sum(
+            int(item["forced_renders"]) for item in camera_quality_events
+        ),
+        "camera_rgb_std_min": min(
+            (float(item["minimum_rgb_std"]) for item in camera_quality_events),
+            default=0.0,
+        ),
+        "camera_rgb_range_min": min(
+            (float(item["minimum_rgb_range"]) for item in camera_quality_events),
+            default=0.0,
+        ),
+        "camera_depth_fraction_min": min(
+            (float(item["minimum_depth_fraction"]) for item in camera_quality_events),
+            default=0.0,
+        ),
+        "camera_warmup_control_steps": max(
+            (int(item.get("warmup_control_steps", 0)) for item in camera_quality_events),
+            default=0,
+        ),
     }
     return records, metrics
 
@@ -390,9 +660,27 @@ def main() -> None:
         raise ValueError("--max_steps must be at least 1")
     if args_cli.camera_frame_interval < 1:
         raise ValueError("--camera_frame_interval must be at least 1")
+    if args_cli.camera_ready_attempts < 1:
+        raise ValueError("--camera_ready_attempts must be at least 1")
+    if args_cli.camera_min_rgb_std < 0.0 or args_cli.camera_min_rgb_range < 0.0:
+        raise ValueError("Camera quality thresholds must be non-negative")
+    if not 0.0 <= args_cli.camera_min_depth_fraction <= 1.0:
+        raise ValueError("--camera_min_depth_fraction must be within [0, 1]")
+    if args_cli.camera_warmup_steps < 1:
+        raise ValueError("--camera_warmup_steps must be at least 1")
+    if not 1 <= args_cli.camera_warmup_consecutive_frames <= args_cli.camera_warmup_steps:
+        raise ValueError(
+            "--camera_warmup_consecutive_frames must be within [1, camera_warmup_steps]"
+        )
+    if args_cli.camera_batch_retries < 0:
+        raise ValueError("--camera_batch_retries must be non-negative")
 
     env_cfg = PickLiftEnvCfg()
     env_cfg.scene.num_envs = args_cli.num_envs
+    if args_cli.enable_cameras:
+        # Avoid reading Replicator annotators during physics-only decimation
+        # substeps. Camera data is checked explicitly after the rendered step.
+        env_cfg.scene.lazy_sensor_update = True
     physx_aggregate_pairs_capacity = configure_parallel_physx_capacity(
         env_cfg, args_cli.num_envs
     )
@@ -415,13 +703,38 @@ def main() -> None:
 
     try:
         for batch_index in range(args_cli.episodes):
-            records, metrics = _collect_batch(
-                env,
-                env_cfg,
-                args_cli.max_steps,
-                randomizer,
-                args_cli.camera_frame_interval,
-            )
+            for retry_index in range(args_cli.camera_batch_retries + 1):
+                try:
+                    records, metrics = _collect_batch(
+                        env,
+                        env_cfg,
+                        args_cli.max_steps,
+                        randomizer,
+                        args_cli.camera_frame_interval,
+                        args_cli.camera_ready_attempts,
+                        args_cli.camera_min_rgb_std,
+                        args_cli.camera_min_rgb_range,
+                        args_cli.camera_min_depth_fraction,
+                        args_cli.camera_warmup_steps,
+                        args_cli.camera_warmup_consecutive_frames,
+                    )
+                    metrics["camera_batch_retry_index"] = retry_index
+                    break
+                except CameraQualityError as exc:
+                    if retry_index >= args_cli.camera_batch_retries:
+                        raise
+                    print(
+                        "CAMERA_BATCH_RETRY="
+                        + json.dumps(
+                            {
+                                "batch_index": batch_index,
+                                "retry_index": retry_index + 1,
+                                "reason": str(exc),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
             batch_metrics.append(metrics)
             next_episode_id = writer.next_episode_id()
             for env_index, (buffer, metadata, domain_params, camera_buffer) in enumerate(records):
@@ -477,12 +790,28 @@ def main() -> None:
         "randomization_seed": randomizer.seed if randomizer is not None else None,
         "camera_data": bool(args_cli.enable_cameras),
         "camera_frame_interval": args_cli.camera_frame_interval if args_cli.enable_cameras else None,
+        "camera_quality_gate": (
+            {
+                "minimum_rgb_std": args_cli.camera_min_rgb_std,
+                "minimum_rgb_range": args_cli.camera_min_rgb_range,
+                "minimum_depth_fraction": args_cli.camera_min_depth_fraction,
+                "maximum_refresh_attempts": args_cli.camera_ready_attempts,
+                "maximum_warmup_control_steps": args_cli.camera_warmup_steps,
+                "required_consecutive_warmup_frames": args_cli.camera_warmup_consecutive_frames,
+                "maximum_batch_retries": args_cli.camera_batch_retries,
+            }
+            if args_cli.enable_cameras
+            else None
+        ),
         "camera_frames_written": (
             sum(int(item["camera_frames"]) for item in collected)
             if args_cli.enable_cameras
             else 0
         ),
         "physx_gpu_total_aggregate_pairs_capacity": physx_aggregate_pairs_capacity,
+        "camera_batch_retries_total": sum(
+            int(item.get("camera_batch_retry_index", 0)) for item in batch_metrics
+        ),
         "rollout_wall_time_s": total_rollout_time,
         "simulation_fps": total_vector_steps / total_rollout_time,
         "environment_steps_per_second": total_transitions / total_rollout_time,

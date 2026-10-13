@@ -42,9 +42,58 @@ class VisualPolicyObservationAdapter:
         self.maximum_grasp_distance_m = float(maximum_grasp_distance_m)
         self.maximum_held_distance_m = float(maximum_held_distance_m)
         self._filtered_position: torch.Tensor | None = None
+        self._previous_ee_position: torch.Tensor | None = None
+        self._kinematic_tracking: torch.Tensor | None = None
 
     def reset(self) -> None:
         self._filtered_position = None
+        self._previous_ee_position = None
+        self._kinematic_tracking = None
+
+    def propagate_held_position(
+        self,
+        policy_observation: torch.Tensor,
+        visual_object_position_b: torch.Tensor,
+    ) -> torch.Tensor:
+        """Propagate an occluded held object using robot proprioception only.
+
+        RGB-D supplies the initial tabletop position.  Once the fingers have
+        closed near that position, the object is assumed rigidly attached and
+        follows the measured end-effector translation.  This lets a PPO actor
+        observe lift progress without simulator object state or post-occlusion
+        image inference.
+        """
+
+        if policy_observation.ndim != 2 or policy_observation.shape[1] != self.OBSERVATION_DIM:
+            raise ValueError(
+                f"Expected policy observations [N,{self.OBSERVATION_DIM}], "
+                f"got {tuple(policy_observation.shape)}"
+            )
+        count = policy_observation.shape[0]
+        if visual_object_position_b.shape != (count, 3):
+            raise ValueError("visual_object_position_b must have shape [N,3]")
+        ee_position = policy_observation[:, self.END_EFFECTOR_POSE.start : self.END_EFFECTOR_POSE.start + 3]
+        finger_mean = policy_observation[:, self.GRASP_STATE.start + 3]
+        if self._previous_ee_position is None or self._previous_ee_position.shape != ee_position.shape:
+            self._previous_ee_position = ee_position.detach().clone()
+            self._kinematic_tracking = torch.zeros(
+                count, dtype=torch.bool, device=policy_observation.device
+            )
+            return visual_object_position_b
+
+        assert self._kinematic_tracking is not None
+        distance = torch.linalg.vector_norm(ee_position - visual_object_position_b, dim=-1)
+        newly_held = (
+            (finger_mean < 0.025)
+            & (finger_mean > 0.005)
+            & (distance < self.maximum_held_distance_m)
+        )
+        self._kinematic_tracking |= newly_held
+        result = visual_object_position_b.clone()
+        ee_delta = ee_position - self._previous_ee_position
+        result[self._kinematic_tracking] += ee_delta[self._kinematic_tracking]
+        self._previous_ee_position.copy_(ee_position)
+        return result
 
     def filter_position(self, position_b: torch.Tensor) -> torch.Tensor:
         if position_b.ndim != 2 or position_b.shape[1] != 3:
@@ -97,8 +146,14 @@ class VisualPolicyObservationAdapter:
         delta = ee_position - object_position
         xy_distance = torch.linalg.vector_norm(delta[:, :2], dim=-1)
         distance = torch.linalg.vector_norm(delta, dim=-1)
-        finger_mean = result[:, 7:9].mean(dim=-1)
-        finger_speed = result[:, 16:18].abs().mean(dim=-1)
+        # The first observation block is Isaac Lab's joint_pos_rel, not raw
+        # joint position.  Reusing slices 7:9 made an open gripper look closed
+        # and corrupted both the held proxy and adaptive phase.  The original
+        # grasp-state term already contains robot-only absolute finger position
+        # and speed; preserve those two proprioceptive values while replacing
+        # every object-dependent value with visual geometry.
+        finger_mean = result[:, self.GRASP_STATE.start + 3].clone()
+        finger_speed = result[:, self.GRASP_STATE.start + 4].clone()
         held = (
             (finger_mean < 0.025)
             & (finger_mean > 0.005)

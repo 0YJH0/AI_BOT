@@ -74,6 +74,13 @@ SAMPLING_FIELDS = [
     "source_failure_type",
 ]
 
+VISUAL_FIELDS = [
+    "visual_object_x_m",
+    "visual_object_y_m",
+    "visual_object_z_m",
+    "initial_visual_position_error_m",
+]
+
 
 def classify_failure(
     *,
@@ -181,9 +188,11 @@ def write_benchmark_reports(
     episode_path = output_dir / "benchmark_episodes.csv"
     report_path = output_dir / "benchmark_report.json"
     _write_csv(summary_path, SUMMARY_FIELDS, summaries)
-    episode_fields = EPISODE_FIELDS + (
-        SAMPLING_FIELDS if any("sampling_strategy" in row for row in episode_rows) else []
-    )
+    episode_fields = list(EPISODE_FIELDS)
+    if any("visual_object_x_m" in row for row in episode_rows):
+        episode_fields += VISUAL_FIELDS
+    if any("sampling_strategy" in row for row in episode_rows):
+        episode_fields += SAMPLING_FIELDS
     _write_csv(episode_path, episode_fields, episode_rows)
     report = {
         "status": "PHASE7_BENCHMARK_OK",

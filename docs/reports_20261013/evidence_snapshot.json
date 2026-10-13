@@ -1,0 +1,1113 @@
+{
+  "report_date": "2026-10-13",
+  "generated_at_utc": "2026-10-13T09:43:52.085508+00:00",
+  "note": "Original JSON SHA256 hashes; snapshot project-local absolute paths are normalized. No new experiments.",
+  "success_criteria_caveat": "Historical state benchmarks use center height above table; latest VLA adds actual lift >= 0.10 m.",
+  "sources": [
+    {
+      "source": "results/benchmark/benchmark_report.json",
+      "source_sha256": "f27e6e64fb9d512eb26f62a098d3a704da12e9854efd4c9171df1ab5bf7b9476",
+      "snapshot": {
+        "status": "PHASE7_BENCHMARK_OK",
+        "created_at": "2026-09-15T20:01:55.533247+00:00",
+        "config": {
+          "benchmark_version": "1.0.0",
+          "config_file": "<PROJECT_ROOT>/configs/benchmark.yaml",
+          "config_sha256": "2e4ebe8a81cc8b13789b7d95c6ecf224ea0017c920e8dc4ddf89ce564d093170",
+          "task": "Franka-Pick-and-Lift-v0",
+          "controller": "scripted_absolute_differential_ik",
+          "device": "cuda:0",
+          "num_envs": 128,
+          "episodes_per_level": 256,
+          "max_steps": 300,
+          "warmup_steps": 20,
+          "physx_gpu_total_aggregate_pairs_capacity": 16384,
+          "success_criteria": {
+            "minimum_height_above_table_m": 0.1,
+            "maximum_mean_finger_position": 0.03,
+            "maximum_ee_object_distance_m": 0.08,
+            "sustained_steps": 10
+          },
+          "levels": [
+            {
+              "name": "easy",
+              "seed": 7101,
+              "randomization_config": "<PROJECT_ROOT>/configs/randomization_easy.yaml",
+              "randomization_config_sha256": "7eb4b1d6f849128dc2be7ae793992423e6dcf5e5e8b0ae6ae472f72d0f5b46fd",
+              "description": "Fixed object, physics, camera, and lighting parameters."
+            },
+            {
+              "name": "medium",
+              "seed": 7102,
+              "randomization_config": "<PROJECT_ROOT>/configs/randomization_medium.yaml",
+              "randomization_config_sha256": "9ed19885697dc2a82bdf185c3775562914cdd8a6ec7580cca7c338220376438f",
+              "description": "Random object planar pose, yaw, and mass; fixed friction and camera."
+            },
+            {
+              "name": "hard",
+              "seed": 7103,
+              "randomization_config": "<PROJECT_ROOT>/configs/randomization_hard.yaml",
+              "randomization_config_sha256": "d71989ca2c40919bb4c8dadda958288582b410c2b5ead07252ed654b36e882e3",
+              "description": "Wider object pose and mass ranges plus friction, camera, and lighting variation."
+            }
+          ],
+          "camera_enabled": false,
+          "camera_note": "Camera parameters are sampled but not instantiated for the state-based baseline.",
+          "hardware": {
+            "gpu_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+            "cuda_device_capability": [
+              8,
+              9
+            ]
+          },
+          "software": {
+            "python": "3.11.16",
+            "torch": "2.7.0+cu128",
+            "torch_cuda": "12.8",
+            "isaaclab": "2.3.2",
+            "isaacsim": "5.1.0.0"
+          }
+        },
+        "summaries": [
+          {
+            "difficulty": "easy",
+            "seed": 7101,
+            "num_episodes": 256,
+            "num_success": 256,
+            "num_failure": 0,
+            "success_rate": 1.0,
+            "failure_rate": 0.0,
+            "average_completion_time_s": 2.4,
+            "average_episode_duration_s": 2.4,
+            "average_episode_reward": 6.178989941254258,
+            "grasp_failure_rate": 0.0,
+            "object_drop_rate": 0.0,
+            "lift_failure_rate": 0.0,
+            "approach_failure_rate": 0.0,
+            "timeout_rate": 0.0,
+            "failure_counts": {},
+            "environment_steps_per_second": 1797.3132413682224,
+            "wall_time_s": 17.092179200000828,
+            "collision_count_available": false,
+            "description": "Fixed object, physics, camera, and lighting parameters."
+          },
+          {
+            "difficulty": "medium",
+            "seed": 7102,
+            "num_episodes": 256,
+            "num_success": 255,
+            "num_failure": 1,
+            "success_rate": 0.99609375,
+            "failure_rate": 0.00390625,
+            "average_completion_time_s": 2.4233725490196076,
+            "average_episode_duration_s": 2.43734375,
+            "average_episode_reward": 6.061021146597341,
+            "grasp_failure_rate": 0.0,
+            "object_drop_rate": 0.0,
+            "lift_failure_rate": 0.00390625,
+            "approach_failure_rate": 0.0,
+            "timeout_rate": 0.0,
+            "failure_counts": {
+              "lift_failure": 1
+            },
+            "environment_steps_per_second": 3126.937903106358,
+            "wall_time_s": 17.438146100001177,
+            "collision_count_available": false,
+            "description": "Random object planar pose, yaw, and mass; fixed friction and camera."
+          },
+          {
+            "difficulty": "hard",
+            "seed": 7103,
+            "num_episodes": 256,
+            "num_success": 240,
+            "num_failure": 16,
+            "success_rate": 0.9375,
+            "failure_rate": 0.0625,
+            "average_completion_time_s": 2.45275,
+            "average_episode_duration_s": 2.661953125,
+            "average_episode_reward": 5.465440332191065,
+            "grasp_failure_rate": 0.0,
+            "object_drop_rate": 0.0,
+            "lift_failure_rate": 0.05859375,
+            "approach_failure_rate": 0.00390625,
+            "timeout_rate": 0.0,
+            "failure_counts": {
+              "approach_failure": 1,
+              "lift_failure": 15
+            },
+            "environment_steps_per_second": 3681.822975642593,
+            "wall_time_s": 20.85923209998873,
+            "collision_count_available": false,
+            "description": "Wider object pose and mass ranges plus friction, camera, and lighting variation."
+          }
+        ],
+        "episode_results_file": "benchmark_episodes.csv",
+        "collision_metric": {
+          "available": false,
+          "reason": "No ContactSensor is configured in the Phase 7 low-dimensional task."
+        }
+      }
+    },
+    {
+      "source": "results/ppo_evaluation_dagger2_ppo_bc_128step_100iter_final_256/benchmark_report.json",
+      "source_sha256": "ef46ff1c3775962c769615eae8a416dbed19c32792ba629db47797b857e57ec0",
+      "snapshot": {
+        "status": "PHASE11_PPO_EVALUATION_OK",
+        "created_at": "2026-09-17T14:06:26.216713+00:00",
+        "config": {
+          "phase": 11,
+          "policy": "rsl_rl_ppo",
+          "action_space": "ik_abs",
+          "checkpoint": "<PROJECT_ROOT>/results/ppo/ik_abs_dagger2_ppo_bc_128step_1024env_100iter/model_100.pt",
+          "benchmark_config": "<PROJECT_ROOT>/configs/benchmark.yaml",
+          "agent_config": "<PROJECT_ROOT>/results/ppo/ik_abs_dagger2_ppo_bc_128step_1024env_100iter/agent_config.yaml",
+          "device": "cuda:0",
+          "num_envs": 128,
+          "episodes_per_level": 256,
+          "max_steps": 600,
+          "physx_gpu_total_aggregate_pairs_capacity": 16384,
+          "visual_checkpoint": null,
+          "object_observation_source": "simulator_state",
+          "success_criteria": {
+            "minimum_height_above_table_m": 0.1,
+            "maximum_mean_finger_position": 0.03,
+            "maximum_ee_object_distance_m": 0.08,
+            "sustained_steps": 10
+          }
+        },
+        "summaries": [
+          {
+            "difficulty": "easy",
+            "seed": 7101,
+            "num_episodes": 256,
+            "num_success": 256,
+            "num_failure": 0,
+            "success_rate": 1.0,
+            "failure_rate": 0.0,
+            "average_completion_time_s": 1.48,
+            "average_episode_duration_s": 1.48,
+            "average_episode_reward": 6.405087664723396,
+            "grasp_failure_rate": 0.0,
+            "object_drop_rate": 0.0,
+            "lift_failure_rate": 0.0,
+            "approach_failure_rate": 0.0,
+            "timeout_rate": 0.0,
+            "failure_counts": {},
+            "environment_steps_per_second": 4128.177289872583,
+            "wall_time_s": 4.588950200000909,
+            "collision_count_available": false,
+            "description": "Fixed object, physics, camera, and lighting parameters."
+          },
+          {
+            "difficulty": "medium",
+            "seed": 7102,
+            "num_episodes": 256,
+            "num_success": 248,
+            "num_failure": 8,
+            "success_rate": 0.96875,
+            "failure_rate": 0.03125,
+            "average_completion_time_s": 1.7616129032258065,
+            "average_episode_duration_s": 2.0815625,
+            "average_episode_reward": 6.620570908300579,
+            "grasp_failure_rate": 0.0,
+            "object_drop_rate": 0.0,
+            "lift_failure_rate": 0.03125,
+            "approach_failure_rate": 0.0,
+            "timeout_rate": 0.0,
+            "failure_counts": {
+              "lift_failure": 8
+            },
+            "environment_steps_per_second": 4399.655581441509,
+            "wall_time_s": 34.91182369999842,
+            "collision_count_available": false,
+            "description": "Random object planar pose, yaw, and mass; fixed friction and camera."
+          },
+          {
+            "difficulty": "hard",
+            "seed": 7103,
+            "num_episodes": 256,
+            "num_success": 229,
+            "num_failure": 27,
+            "success_rate": 0.89453125,
+            "failure_rate": 0.10546875,
+            "average_completion_time_s": 2.119039301310044,
+            "average_episode_duration_s": 3.161171875,
+            "average_episode_reward": 6.74523539096117,
+            "grasp_failure_rate": 0.0,
+            "object_drop_rate": 0.00390625,
+            "lift_failure_rate": 0.09765625,
+            "approach_failure_rate": 0.0,
+            "timeout_rate": 0.00390625,
+            "failure_counts": {
+              "lift_failure": 25,
+              "object_drop": 1,
+              "timeout": 1
+            },
+            "environment_steps_per_second": 4308.32850247503,
+            "wall_time_s": 35.65187750000041,
+            "collision_count_available": false,
+            "description": "Wider object pose and mass ranges plus friction, camera, and lighting variation."
+          }
+        ],
+        "episode_results_file": "benchmark_episodes.csv",
+        "collision_metric": {
+          "available": false,
+          "reason": "No ContactSensor is configured in the Phase 7 low-dimensional task."
+        }
+      }
+    },
+    {
+      "source": "results/ppo/ik_abs_dagger2_ppo_bc_128step_1024env_100iter/training_summary.json",
+      "source_sha256": "be53aee6d7d2832805649cbcfbadd7c1ec6d36d0ce33899f19ceb913fb61d922",
+      "snapshot": {
+        "status": "PHASE11_PPO_TRAINING_OK",
+        "run_name": "ik_abs_dagger2_ppo_bc_128step_1024env_100iter",
+        "seed": 42,
+        "num_envs": 1024,
+        "iterations": 100,
+        "start_iteration": 1,
+        "final_iteration": 100,
+        "resume_checkpoint": "<PROJECT_ROOT>/results/ppo/bc_dagger2_adaptive_contact_vertical_ik_abs_1024env/model_bc.pt",
+        "action_space": "ik_abs",
+        "action_noise_std": 0.005,
+        "learning_rate": 1e-06,
+        "effective_optimizer_learning_rate": 1e-06,
+        "learning_rate_schedule": "fixed",
+        "num_steps_per_env": 128,
+        "save_interval": 20,
+        "bc_teacher_checkpoint": "<PROJECT_ROOT>/results/ppo/bc_dagger2_adaptive_contact_vertical_ik_abs_1024env/model_bc.pt",
+        "bc_loss_coefficient": 0.05,
+        "bc_num_mini_batches": 4,
+        "training_transitions": 13107200,
+        "wall_time_s": 399.4217348000002,
+        "transitions_per_second": 32815.440067534335,
+        "physx_gpu_total_aggregate_pairs_capacity": 16384,
+        "checkpoint": "<PROJECT_ROOT>/results/ppo/ik_abs_dagger2_ppo_bc_128step_1024env_100iter/model_100.pt",
+        "output_dir": "<PROJECT_ROOT>/results/ppo/ik_abs_dagger2_ppo_bc_128step_1024env_100iter",
+        "torch": "2.7.0+cu128"
+      }
+    },
+    {
+      "source": "dataset/vla_execution_aligned_full_20261011_truth_v9/collection_summary.json",
+      "source_sha256": "67f47888a3806b78a1682f26c7e22404b5b659276deaa468e0cf528b12467907",
+      "snapshot": {
+        "format": "vla_execution_aligned_full_v1",
+        "status": "FULL_TRAJECTORY_COLLECTION_OK",
+        "target_per_level": 200,
+        "successes": {
+          "easy": 200,
+          "medium": 200,
+          "hard": 200
+        },
+        "attempts": {
+          "easy": 200,
+          "medium": 200,
+          "hard": 210
+        },
+        "reject_reasons": {
+          "invalid_visual_initialization": 7,
+          "lift_failure": 1,
+          "approach_failure": 2
+        },
+        "control_hz": 50,
+        "policy_hz": 10,
+        "action_repeat": 5,
+        "execution_horizon": 1,
+        "maximum_position_step_m": 0.04,
+        "minimum_true_lift_cm": 10,
+        "seed_offset": 20262011,
+        "initial_joint_std": 0.025,
+        "vision_checkpoint_sha256": "a5d75a3f149c0833850a576b8954a183730615d70dd1ea361c4cc17cd1f85016",
+        "label_source": "live simulator truth plus teacher feedback FSM; student visual input is separate",
+        "collection_teacher": "truth",
+        "teacher_target_source": "simulator_truth_root_frame",
+        "student_input_target_source": "latched_visual_estimate_root_frame",
+        "truth_coordinates_in_student_input": false
+      }
+    },
+    {
+      "source": "exports/lerobot/pick_lift_execution_aligned_20261011_truth_v9/train/meta/info.json",
+      "source_sha256": "698fc4b7608a5531f16c637542bb24c58d2e2df6888542afc1b5f7baa1a2a57d",
+      "snapshot": {
+        "codebase_version": "v3.0",
+        "robot_type": "franka_isaac_lab_delta_ik_execution_aligned",
+        "total_episodes": 510,
+        "total_frames": 27338,
+        "total_tasks": 1,
+        "chunks_size": 1000,
+        "data_files_size_in_mb": 100,
+        "video_files_size_in_mb": 200,
+        "fps": 10,
+        "splits": {
+          "train": "0:510"
+        },
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": null,
+        "features": {
+          "observation.images.table": {
+            "dtype": "image",
+            "shape": [
+              240,
+              320,
+              3
+            ],
+            "names": [
+              "height",
+              "width",
+              "channel"
+            ]
+          },
+          "observation.state": {
+            "dtype": "float32",
+            "shape": [
+              30
+            ],
+            "names": [
+              "joint_position_0",
+              "joint_position_1",
+              "joint_position_2",
+              "joint_position_3",
+              "joint_position_4",
+              "joint_position_5",
+              "joint_position_6",
+              "joint_position_7",
+              "joint_position_8",
+              "joint_velocity_0",
+              "joint_velocity_1",
+              "joint_velocity_2",
+              "joint_velocity_3",
+              "joint_velocity_4",
+              "joint_velocity_5",
+              "joint_velocity_6",
+              "joint_velocity_7",
+              "joint_velocity_8",
+              "eef_x",
+              "eef_y",
+              "eef_z",
+              "eef_qw",
+              "eef_qx",
+              "eef_qy",
+              "eef_qz",
+              "visual_object_x",
+              "visual_object_y",
+              "visual_object_z",
+              "visual_pose_valid",
+              "controller_phase"
+            ]
+          },
+          "action": {
+            "dtype": "float32",
+            "shape": [
+              8
+            ],
+            "names": [
+              "delta_x",
+              "delta_y",
+              "delta_z",
+              "target_qw",
+              "target_qx",
+              "target_qy",
+              "target_qz",
+              "gripper"
+            ]
+          },
+          "training.controller_phase": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "controller_phase"
+            ]
+          },
+          "training.difficulty_id": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "difficulty_id"
+            ]
+          },
+          "training.loss_weight": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "loss_weight"
+            ]
+          },
+          "timestamp": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "frame_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "episode_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "task_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          }
+        }
+      }
+    },
+    {
+      "source": "exports/lerobot/pick_lift_execution_aligned_20261011_truth_v9/validation/meta/info.json",
+      "source_sha256": "898473b52a36cdecb0c99f244636b78f0870853b9af70f446ac893e778c773ab",
+      "snapshot": {
+        "codebase_version": "v3.0",
+        "robot_type": "franka_isaac_lab_delta_ik_execution_aligned",
+        "total_episodes": 45,
+        "total_frames": 2438,
+        "total_tasks": 1,
+        "chunks_size": 1000,
+        "data_files_size_in_mb": 100,
+        "video_files_size_in_mb": 200,
+        "fps": 10,
+        "splits": {
+          "train": "0:45"
+        },
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": null,
+        "features": {
+          "observation.images.table": {
+            "dtype": "image",
+            "shape": [
+              240,
+              320,
+              3
+            ],
+            "names": [
+              "height",
+              "width",
+              "channel"
+            ]
+          },
+          "observation.state": {
+            "dtype": "float32",
+            "shape": [
+              30
+            ],
+            "names": [
+              "joint_position_0",
+              "joint_position_1",
+              "joint_position_2",
+              "joint_position_3",
+              "joint_position_4",
+              "joint_position_5",
+              "joint_position_6",
+              "joint_position_7",
+              "joint_position_8",
+              "joint_velocity_0",
+              "joint_velocity_1",
+              "joint_velocity_2",
+              "joint_velocity_3",
+              "joint_velocity_4",
+              "joint_velocity_5",
+              "joint_velocity_6",
+              "joint_velocity_7",
+              "joint_velocity_8",
+              "eef_x",
+              "eef_y",
+              "eef_z",
+              "eef_qw",
+              "eef_qx",
+              "eef_qy",
+              "eef_qz",
+              "visual_object_x",
+              "visual_object_y",
+              "visual_object_z",
+              "visual_pose_valid",
+              "controller_phase"
+            ]
+          },
+          "action": {
+            "dtype": "float32",
+            "shape": [
+              8
+            ],
+            "names": [
+              "delta_x",
+              "delta_y",
+              "delta_z",
+              "target_qw",
+              "target_qx",
+              "target_qy",
+              "target_qz",
+              "gripper"
+            ]
+          },
+          "training.controller_phase": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "controller_phase"
+            ]
+          },
+          "training.difficulty_id": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "difficulty_id"
+            ]
+          },
+          "training.loss_weight": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "loss_weight"
+            ]
+          },
+          "timestamp": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "frame_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "episode_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "task_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          }
+        }
+      }
+    },
+    {
+      "source": "exports/lerobot/pick_lift_execution_aligned_20261011_truth_v9/test/meta/info.json",
+      "source_sha256": "1638ae739c1598158f3c0908379208e754a7f87d3c5c68c3498c4bb5796547f9",
+      "snapshot": {
+        "codebase_version": "v3.0",
+        "robot_type": "franka_isaac_lab_delta_ik_execution_aligned",
+        "total_episodes": 45,
+        "total_frames": 2399,
+        "total_tasks": 1,
+        "chunks_size": 1000,
+        "data_files_size_in_mb": 100,
+        "video_files_size_in_mb": 200,
+        "fps": 10,
+        "splits": {
+          "train": "0:45"
+        },
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": null,
+        "features": {
+          "observation.images.table": {
+            "dtype": "image",
+            "shape": [
+              240,
+              320,
+              3
+            ],
+            "names": [
+              "height",
+              "width",
+              "channel"
+            ]
+          },
+          "observation.state": {
+            "dtype": "float32",
+            "shape": [
+              30
+            ],
+            "names": [
+              "joint_position_0",
+              "joint_position_1",
+              "joint_position_2",
+              "joint_position_3",
+              "joint_position_4",
+              "joint_position_5",
+              "joint_position_6",
+              "joint_position_7",
+              "joint_position_8",
+              "joint_velocity_0",
+              "joint_velocity_1",
+              "joint_velocity_2",
+              "joint_velocity_3",
+              "joint_velocity_4",
+              "joint_velocity_5",
+              "joint_velocity_6",
+              "joint_velocity_7",
+              "joint_velocity_8",
+              "eef_x",
+              "eef_y",
+              "eef_z",
+              "eef_qw",
+              "eef_qx",
+              "eef_qy",
+              "eef_qz",
+              "visual_object_x",
+              "visual_object_y",
+              "visual_object_z",
+              "visual_pose_valid",
+              "controller_phase"
+            ]
+          },
+          "action": {
+            "dtype": "float32",
+            "shape": [
+              8
+            ],
+            "names": [
+              "delta_x",
+              "delta_y",
+              "delta_z",
+              "target_qw",
+              "target_qx",
+              "target_qy",
+              "target_qz",
+              "gripper"
+            ]
+          },
+          "training.controller_phase": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "controller_phase"
+            ]
+          },
+          "training.difficulty_id": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "difficulty_id"
+            ]
+          },
+          "training.loss_weight": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": [
+              "loss_weight"
+            ]
+          },
+          "timestamp": {
+            "dtype": "float32",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "frame_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "episode_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          },
+          "task_index": {
+            "dtype": "int64",
+            "shape": [
+              1
+            ],
+            "names": null
+          }
+        }
+      }
+    },
+    {
+      "source": "results/vla/medium64_parallel16_20261013_160323_916/comparison_summary.json",
+      "source_sha256": "459c6c01a45d45b5afd229c315fc23724f0cae5ca86b68c07f22738d865d004d",
+      "snapshot": {
+        "status": "COMPLETE",
+        "protocol": {
+          "orientation_mode": "model",
+          "results": "<PROJECT_ROOT>/results/vla/medium64_parallel16_20261013_160323_916",
+          "inference_seed": 20261011,
+          "env_spacing_m": 6,
+          "episodes_per_arm": 64,
+          "phase_mechanism": "legacy",
+          "waves_per_arm": 4,
+          "planned_total_episodes": 256,
+          "action_repeat": 5,
+          "input": "RGB_language_proprio_visual_estimate_phase",
+          "chunk_size": 4,
+          "difficulty": "medium",
+          "caveat": "Same 64 scene samples and wave grouping. Different horizons have different inference schedules/noise draws. Rank arms have different training histories. Not directly pooled with old single-camera runs.",
+          "truth_in_student_input": false,
+          "scene_seed": 7102,
+          "minimum_actual_lift_m": 0.1,
+          "camera": "standard Camera RGB-D 320x240 (16 render products)",
+          "grasp_enable_distance_m": 0.075,
+          "gpu_memory_fraction": 0.35,
+          "headless": true,
+          "max_steps": 600,
+          "retraining": false,
+          "num_envs": 16,
+          "scripted_fallback": false
+        },
+        "results": [
+          {
+            "checkpoint_sha256": "2B02E8581CDC2A0001A985794AF2618EB75B9AA9A04AD601450FF876BAB3ED2F",
+            "arm": "v18_r32_chunk4_execute1",
+            "successes": 10,
+            "episodes_with_close": 63,
+            "scene_manifest_sha256": "250FB7059EEA0327559959ACF2A4C68D9B0D5A0AD2D7CE57826D314D185B4052",
+            "episodes": 64,
+            "checkpoint": "<PROJECT_ROOT>/results/vla/training/smolvla_chunk4_rank32_20261012_212747_052_v18/checkpoints/006000/pretrained_model",
+            "report": "<PROJECT_ROOT>/results/vla/medium64_parallel16_20261013_160323_916/v18_r32_chunk4_execute1/parallel_report.json",
+            "early_close_requests_over_2_5cm": 3933,
+            "mean_batch_inference_ms": 596.599116897583,
+            "execution_horizon": 1,
+            "gpu_peak_used_mib": 7588,
+            "mean_first_close_true_distance_cm": 3.95132756481568,
+            "mean_maximum_lift_cm": 2.186107821762562,
+            "success_rate": 0.15625,
+            "elapsed_s": 633.601226800005,
+            "failure_counts": {
+              "max_steps": 54
+            }
+          },
+          {
+            "checkpoint_sha256": "30EB67D42A8C211B9F54A6B626D4626EF71BA63066A80F0DE4C17289846B528A",
+            "arm": "v17_r16_chunk4_execute1",
+            "successes": 8,
+            "episodes_with_close": 58,
+            "scene_manifest_sha256": "250FB7059EEA0327559959ACF2A4C68D9B0D5A0AD2D7CE57826D314D185B4052",
+            "episodes": 64,
+            "checkpoint": "<PROJECT_ROOT>/results/vla/training/smolvla_v9_chunk4_20261012_195615_610_v17/checkpoints/006000/pretrained_model",
+            "report": "<PROJECT_ROOT>/results/vla/medium64_parallel16_20261013_160323_916/v17_r16_chunk4_execute1/parallel_report.json",
+            "early_close_requests_over_2_5cm": 3907,
+            "mean_batch_inference_ms": 607.2052062988281,
+            "execution_horizon": 1,
+            "gpu_peak_used_mib": 7612,
+            "mean_first_close_true_distance_cm": 4.359219737896888,
+            "mean_maximum_lift_cm": 1.8960776273161173,
+            "success_rate": 0.125,
+            "elapsed_s": 611.8654844000121,
+            "failure_counts": {
+              "max_steps": 56
+            }
+          },
+          {
+            "checkpoint_sha256": "30EB67D42A8C211B9F54A6B626D4626EF71BA63066A80F0DE4C17289846B528A",
+            "arm": "v17_r16_chunk4_execute2",
+            "successes": 14,
+            "episodes_with_close": 55,
+            "scene_manifest_sha256": "250FB7059EEA0327559959ACF2A4C68D9B0D5A0AD2D7CE57826D314D185B4052",
+            "episodes": 64,
+            "checkpoint": "<PROJECT_ROOT>/results/vla/training/smolvla_v9_chunk4_20261012_195615_610_v17/checkpoints/006000/pretrained_model",
+            "report": "<PROJECT_ROOT>/results/vla/medium64_parallel16_20261013_160323_916/v17_r16_chunk4_execute2/parallel_report.json",
+            "early_close_requests_over_2_5cm": 3671,
+            "mean_batch_inference_ms": 603.2011637369792,
+            "execution_horizon": 2,
+            "gpu_peak_used_mib": 7396,
+            "mean_first_close_true_distance_cm": 4.466422723436898,
+            "mean_maximum_lift_cm": 2.81310579739511,
+            "success_rate": 0.21875,
+            "elapsed_s": 415.98943400004646,
+            "failure_counts": {
+              "max_steps": 50
+            }
+          },
+          {
+            "checkpoint_sha256": "30EB67D42A8C211B9F54A6B626D4626EF71BA63066A80F0DE4C17289846B528A",
+            "arm": "v17_r16_chunk4_execute4",
+            "successes": 7,
+            "episodes_with_close": 54,
+            "scene_manifest_sha256": "250FB7059EEA0327559959ACF2A4C68D9B0D5A0AD2D7CE57826D314D185B4052",
+            "episodes": 64,
+            "checkpoint": "<PROJECT_ROOT>/results/vla/training/smolvla_v9_chunk4_20261012_195615_610_v17/checkpoints/006000/pretrained_model",
+            "report": "<PROJECT_ROOT>/results/vla/medium64_parallel16_20261013_160323_916/v17_r16_chunk4_execute4/parallel_report.json",
+            "early_close_requests_over_2_5cm": 4511,
+            "mean_batch_inference_ms": 601.5648986816407,
+            "execution_horizon": 4,
+            "gpu_peak_used_mib": 7359,
+            "mean_first_close_true_distance_cm": 4.319300590496924,
+            "mean_maximum_lift_cm": 1.5314323361963034,
+            "success_rate": 0.109375,
+            "elapsed_s": 309.7449950000155,
+            "failure_counts": {
+              "max_steps": 57
+            }
+          }
+        ]
+      }
+    },
+    {
+      "source": "results/vla/parallel_capacity_20261013_155045_631_standard16/capacity_summary.json",
+      "source_sha256": "1a2c9996f523f0a35efd581219765baf084886fdb6806546dc88ed7935cb5062",
+      "snapshot": {
+        "max_steps": 600,
+        "camera_mode": "standard",
+        "caveat": "Medium camera capacity probe; not a proof of success-rate equivalence or indefinite stability. Allocator cap remains 35%; dedicated VRAM from nvidia-smi sampled every 3 seconds.",
+        "upper_bound_not_established": true,
+        "tested": [
+          {
+            "mean_batch_inference_ms": 675.0763552347819,
+            "gpu_free_at_peak_mib": 557,
+            "control_env_steps_per_s": 54.666784787547414,
+            "report": "<PROJECT_ROOT>/results/vla/parallel_capacity_20261013_155045_631_standard16/env_16/parallel_report.json",
+            "error": null,
+            "completed": true,
+            "operationally_stable": true,
+            "gpu_peak_used_mib": 7631,
+            "num_envs": 16
+          }
+        ],
+        "waves": 2,
+        "max_verified_stable_envs": 16,
+        "checkpoint": "<PROJECT_ROOT>/results/vla/training/smolvla_chunk4_rank32_20261012_212747_052_v18/checkpoints/006000/pretrained_model",
+        "status": "SCAN_COMPLETE",
+        "checkpoint_sha256": "2B02E8581CDC2A0001A985794AF2618EB75B9AA9A04AD601450FF876BAB3ED2F"
+      }
+    },
+    {
+      "source": "results/vla/medium64_parallel4_20261013_153842_856/v18_r32_chunk4_execute1/camera_wave0.json",
+      "source_sha256": "68117bf67d619ca39841de1d82846318217a901c0365cd4f43af6651c9a483ff",
+      "snapshot": {
+        "ready": [
+          false,
+          false,
+          false,
+          false
+        ],
+        "quality_valid": [
+          false,
+          false,
+          false,
+          false
+        ],
+        "rgb_std": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "depth_valid_fraction": [
+          0.5043489933013916,
+          0.5043489933013916,
+          0.5043489933013916,
+          0.5043489933013916
+        ],
+        "frame_ids": [
+          1713,
+          1713,
+          1713,
+          1713
+        ],
+        "position_w": [
+          [
+            4.599999904632568,
+            -5.0,
+            1.649999976158142
+          ],
+          [
+            4.599999904632568,
+            1.0,
+            1.649999976158142
+          ],
+          [
+            -1.399999976158142,
+            -5.0,
+            1.649999976158142
+          ],
+          [
+            -1.399999976158142,
+            1.0,
+            1.649999976158142
+          ]
+        ],
+        "quat_w_ros": [
+          [
+            -0.559758722782135,
+            0.7753028273582458,
+            0.2371770292520523,
+            -0.1712387651205063
+          ],
+          [
+            -0.559758722782135,
+            0.7753028273582458,
+            0.2371770292520523,
+            -0.1712387651205063
+          ],
+          [
+            -0.559758722782135,
+            0.7753028273582458,
+            0.2371770292520523,
+            -0.1712387651205063
+          ],
+          [
+            -0.559758722782135,
+            0.7753028273582458,
+            0.2371770292520523,
+            -0.1712387651205063
+          ]
+        ],
+        "camera_origin_error_m": [
+          1.1920928955078125e-07,
+          1.1920928955078125e-07,
+          0.0,
+          0.0
+        ],
+        "warmup_steps": 1713,
+        "warmup_elapsed_s": 180.04943469999125
+      }
+    },
+    {
+      "source": "results/vla/medium64_parallel4_20261013_154409_905/v18_r32_chunk4_execute1/camera_wave0.json",
+      "source_sha256": "f045bfeb7cf0b04025d2799a4725f8ba98a4cab1fff47513beca9cd18e376f51",
+      "snapshot": {
+        "ready": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "quality_valid": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "rgb_std": [
+          70.130615234375,
+          69.86713409423828,
+          70.01371765136719,
+          72.44880676269531
+        ],
+        "depth_valid_fraction": [
+          0.5044010281562805,
+          0.5044010281562805,
+          0.5044010281562805,
+          0.5044010281562805
+        ],
+        "frame_ids": [
+          14,
+          14,
+          14,
+          14
+        ],
+        "position_w": [
+          [
+            4.599999904632568,
+            -5.0,
+            1.649999976158142
+          ],
+          [
+            4.599999904632568,
+            1.0,
+            1.649999976158142
+          ],
+          [
+            -1.399999976158142,
+            -5.0,
+            1.649999976158142
+          ],
+          [
+            -1.399999976158142,
+            1.0,
+            1.649999976158142
+          ]
+        ],
+        "quat_w_ros": [
+          [
+            -0.559758722782135,
+            0.7753028869628906,
+            0.23717696964740753,
+            -0.1712387055158615
+          ],
+          [
+            -0.559758722782135,
+            0.7753028869628906,
+            0.23717696964740753,
+            -0.1712387055158615
+          ],
+          [
+            -0.5597587823867798,
+            0.7753028273582458,
+            0.2371770143508911,
+            -0.1712387055158615
+          ],
+          [
+            -0.5597587823867798,
+            0.7753028273582458,
+            0.2371770143508911,
+            -0.1712387055158615
+          ]
+        ],
+        "camera_origin_error_m": [
+          1.1920928955078125e-07,
+          1.1920928955078125e-07,
+          0.0,
+          0.0
+        ],
+        "warmup_steps": 14,
+        "warmup_elapsed_s": 2.8339303000248037
+      }
+    }
+  ]
+}

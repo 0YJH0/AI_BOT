@@ -37,3 +37,30 @@ def test_batch_has_independent_objects_and_explicitly_shared_lighting():
     assert len({tuple(sample["object"]["position_m"]) for sample in samples}) == 4
     assert all(sample["lighting"] == samples[0]["lighting"] for sample in samples)
     assert samples[0]["lighting"]["shared_across_batch"] is True
+
+
+def test_reseed_starts_an_independent_reproducible_sequence():
+    first = DomainRandomizer(CONFIG_PATH)
+    second = DomainRandomizer(CONFIG_PATH)
+
+    first.reseed(77101)
+    second.reseed(77101)
+    sample_a = first.sample()
+    sample_b = second.sample()
+
+    assert sample_a == sample_b
+    assert sample_a["randomization_seed"] == 77101
+    assert sample_a["sample_index"] == 1
+    assert sample_a != DomainRandomizer(CONFIG_PATH).sample()
+
+
+def test_reseed_rejects_invalid_identifiers():
+    randomizer = DomainRandomizer(CONFIG_PATH)
+
+    for seed, sample_index in ((-1, 0), (2**32, 0), (1, -1)):
+        try:
+            randomizer.reseed(seed, sample_index=sample_index)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError((seed, sample_index))

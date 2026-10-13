@@ -1,0 +1,15 @@
+version: "1.1.0"
+backend: rsl_rl
+backend_version: "3.1.2"
+official_agent_config: LiftCubePPORunnerCfg
+environment: PickLiftIKPPOEnvCfg
+seed: 42
+num_envs: 1024
+num_steps_per_env: 128
+max_iterations: 100
+save_interval: 20
+output_root: ../results/ppo
+
+# Formal long-horizon PPO fine-tuning uses a frozen DAgger teacher through
+# train_ppo.py's BC auxiliary loss. The teacher checkpoint and coefficient are
+# explicit command-line inputs so the saved training summary records them.

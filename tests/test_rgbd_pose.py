@@ -62,16 +62,37 @@ def test_visual_adapter_replaces_every_object_dependent_term() -> None:
     observation[:, 18:21] = 99.0
     observation[:, 36:57] = 99.0
     visual_position = torch.tensor(((0.5, 0.0, 0.68), (0.6, 0.1, 0.7)))
+    # Absolute finger position/speed live in the grasp-state term and must be
+    # preserved; joint_pos_rel at 7:9 is intentionally unrelated.
+    observation[:, 49] = torch.tensor((0.04, 0.012))
+    observation[:, 50] = torch.tensor((0.003, 0.004))
     adapter = VisualPolicyObservationAdapter(ema_alpha=1.0)
     patched = adapter.patch(
         observation, visual_position, elapsed_s=torch.tensor((1.0, 0.0))
     )
     assert torch.allclose(patched[:, 18:21], visual_position)
     assert torch.allclose(patched[:, 36:39], visual_position)
+    assert torch.allclose(patched[:, 49], torch.tensor((0.04, 0.012)))
+    assert torch.allclose(patched[:, 50], torch.tensor((0.003, 0.004)))
     assert torch.allclose(patched[:, 39], torch.ones(2))
     assert torch.allclose(patched[:, 40:43], torch.zeros(2, 3))
     assert not bool((patched[:, 43:57] == 99.0).any())
     assert patched[0, 46].item() == 0.0
-    assert patched[0, 51].item() == 1.0
-    assert patched[0, 56].item() == 1.0
+    # The first gripper is open, so visual proximity alone must not claim that
+    # the object is held.
+    assert patched[0, 51].item() == 0.0
+    assert patched[0, 55].item() == 1.0
     assert patched[1, 52].item() == 1.0
+
+
+def test_visual_adapter_propagates_held_object_with_end_effector() -> None:
+    adapter = VisualPolicyObservationAdapter(ema_alpha=1.0)
+    observation = torch.zeros(1, 57)
+    observation[:, 29:32] = torch.tensor((0.50, 0.0, 0.05))
+    observation[:, 49] = 0.012
+    position = torch.tensor(((0.50, 0.0, 0.03),))
+    assert torch.allclose(adapter.propagate_held_position(observation, position), position)
+
+    observation[:, 29:32] = torch.tensor((0.50, 0.0, 0.08))
+    propagated = adapter.propagate_held_position(observation, position)
+    assert torch.allclose(propagated, torch.tensor(((0.50, 0.0, 0.06),)))

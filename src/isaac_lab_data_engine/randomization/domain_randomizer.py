@@ -69,6 +69,19 @@ class DomainRandomizer:
         for key in ("intensity", "color_r", "color_g", "color_b"):
             _range(lighting_cfg, key)
 
+    def reseed(self, seed: int, *, sample_index: int = 0) -> None:
+        """Start a deterministic, independently identified sampling sequence."""
+
+        seed = int(seed)
+        sample_index = int(sample_index)
+        if not 0 <= seed <= np.iinfo(np.uint32).max:
+            raise ValueError("seed must fit in an unsigned 32-bit integer")
+        if sample_index < 0:
+            raise ValueError("sample_index must be non-negative")
+        self.seed = seed
+        self.rng = np.random.default_rng(seed)
+        self.sample_index = sample_index
+
     def _uniform(self, section: str, key: str) -> float:
         low, high = _range(self.config[section], key)
         return float(self.rng.uniform(low, high)) if high > low else low
@@ -198,6 +211,8 @@ class DomainRandomizer:
 
         camera_applied = "table_camera" in env.scene.sensors
         if camera_applied:
+            from isaaclab.sensors import TiledCamera
+
             camera = env.scene["table_camera"]
             eye = torch.tensor(
                 [sample["camera"]["position_m"] for sample in params], device=env.device
@@ -205,7 +220,26 @@ class DomainRandomizer:
             target = torch.tensor(
                 [sample["camera"]["target_m"] for sample in params], device=env.device
             )
-            camera.set_world_poses_from_view(env.scene.env_origins + eye, env.scene.env_origins + target)
+            if isinstance(camera, TiledCamera):
+                # Static camera randomization must persist across sim.forward().
+                # A Fabric-only worldMatrix write can be overwritten by the
+                # hierarchy update from unchanged USD local transforms.
+                from isaaclab.utils.math import create_rotation_matrix_from_view, quat_from_matrix
+                orientations = quat_from_matrix(create_rotation_matrix_from_view(
+                    eye, target, UsdGeom.GetStageUpAxis(env.sim.stage), device=env.device)).cpu().tolist()
+                for i, (position, quaternion) in enumerate(zip(eye.cpu().tolist(), orientations)):
+                    xform = UsdGeom.Xformable(env.sim.stage.GetPrimAtPath(f"/World/envs/env_{i}/TableCamera"))
+                    # Reuse the camera's existing transform ops; avoid duplicate attributes on wave two.
+                    ops = {op.GetOpType(): op for op in xform.GetOrderedXformOps()}
+                    translate = ops.get(UsdGeom.XformOp.TypeTranslate)
+                    orient = ops.get(UsdGeom.XformOp.TypeOrient)
+                    if translate is None: translate = xform.AddTranslateOp()
+                    if orient is None: orient = xform.AddOrientOp(UsdGeom.XformOp.PrecisionDouble)
+                    translate.Set(Gf.Vec3d(*position))
+                    qtype = Gf.Quatf if orient.GetPrecision() == UsdGeom.XformOp.PrecisionFloat else Gf.Quatd
+                    orient.Set(qtype(quaternion[0], *quaternion[1:]))
+            else:
+                camera.set_world_poses_from_view(env.scene.env_origins + eye, env.scene.env_origins + target)
 
         dome_light = UsdLux.DomeLight.Get(env.sim.stage, "/World/Light")
         if not dome_light:
@@ -236,6 +270,8 @@ class DomainRandomizer:
                 "light_color_rgb": light_color,
             }
         if camera_applied:
+            from isaaclab.sensors import TiledCamera
+
             xform_cache = UsdGeom.XformCache()
             origins_cpu = env.scene.env_origins.detach().cpu().numpy()
             for env_index, sample in enumerate(applied):
@@ -251,12 +287,15 @@ class DomainRandomizer:
                 actual_translation = np.asarray(camera_translation, dtype=np.float64)
                 if not np.allclose(actual_translation, expected_translation, atol=1.0e-5, rtol=0.0):
                     raise RuntimeError(
-                        "Camera USD pose read-back does not match the randomized command: "
+                        "Camera pose read-back does not match the randomized command: "
                         f"expected {expected_translation.tolist()}, got {actual_translation.tolist()}"
                     )
                 sample["applied_values"]["camera_position_w_m"] = actual_translation.tolist()
                 sample["applied_values"]["camera_transform_w"] = [
                     [float(camera_transform[row][column]) for column in range(4)] for row in range(4)
                 ]
+                # Immediate USD readback verifies authored reset commands.
+                # The parallel probe additionally checks TiledCamera's runtime
+                # world pose after real physics/render warmup (Fabric sync).
                 sample["applied_values"]["camera_readback_source"] = "USD local-to-world transform"
         return applied

@@ -29,9 +29,15 @@ parser.add_argument("--episodes_per_level", type=int, default=None)
 parser.add_argument("--max_steps", type=int, default=None)
 parser.add_argument("--warmup_steps", type=int, default=20)
 parser.add_argument("--output_dir", type=Path, default=None)
+parser.add_argument(
+    "--visual-checkpoint",
+    type=Path,
+    default=None,
+    help="Use RGB-D XYZ estimates instead of simulator object state for Scripted IK.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
-args_cli.enable_cameras = False
+args_cli.enable_cameras = args_cli.visual_checkpoint is not None
 
 benchmark_cfg = load_benchmark_config(args_cli.config)
 app_launcher = AppLauncher(args_cli)
@@ -49,6 +55,11 @@ try:
         configure_parallel_physx_capacity,
     )
     from isaac_lab_data_engine.randomization import create_domain_randomizer
+    from isaac_lab_data_engine.vision import (
+        RGBDPoseEstimator,
+        camera_to_world_position,
+        world_to_root_position,
+    )
 except BaseException:
     traceback.print_exc()
     simulation_app.close()
@@ -70,6 +81,75 @@ def _distribution_version(name: str) -> str | None:
         return None
 
 
+def _refresh_camera(env: ManagerBasedRLEnv) -> None:
+    camera = env.scene["table_camera"]
+    for _ in range(3):
+        env.sim.render()
+        camera.update(env.physics_dt, force_recompute=True)
+
+
+def _workspace_mask(env: ManagerBasedRLEnv) -> torch.Tensor:
+    camera = env.scene["table_camera"]
+    depth = camera.data.output["distance_to_image_plane"]
+    if depth.ndim == 4:
+        depth = depth[..., 0]
+    intrinsics = camera.data.intrinsic_matrices
+    _, height, width = depth.shape
+    y, x = torch.meshgrid(
+        torch.arange(height, device=env.device, dtype=depth.dtype),
+        torch.arange(width, device=env.device, dtype=depth.dtype),
+        indexing="ij",
+    )
+    x_camera = (x[None] - intrinsics[:, 0, 2, None, None]) / intrinsics[:, 0, 0, None, None] * depth
+    y_camera = (y[None] - intrinsics[:, 1, 2, None, None]) / intrinsics[:, 1, 1, None, None] * depth
+    position_camera = torch.stack((x_camera, y_camera, depth), dim=-1)
+    position_w = camera_to_world_position(
+        position_camera,
+        camera.data.pos_w[:, None, None, :],
+        camera.data.quat_w_ros[:, None, None, :],
+    )
+    robot = env.scene["robot"]
+    position_b = world_to_root_position(
+        position_w,
+        robot.data.root_pos_w[:, None, None, :],
+        robot.data.root_quat_w[:, None, None, :],
+    )
+    return (
+        torch.isfinite(depth)
+        & (position_b[..., 0] >= 0.33)
+        & (position_b[..., 0] <= 0.81)
+        & (position_b[..., 1] >= -0.33)
+        & (position_b[..., 1] <= 0.33)
+        & (position_b[..., 2] >= -0.015)
+        & (position_b[..., 2] <= 0.09)
+    )
+
+
+@torch.no_grad()
+def _visual_position_b(
+    env: ManagerBasedRLEnv, estimator: RGBDPoseEstimator
+) -> torch.Tensor:
+    _refresh_camera(env)
+    camera = env.scene["table_camera"]
+    position_camera = estimator.predict(
+        camera.data.output["rgb"],
+        camera.data.output["distance_to_image_plane"],
+        camera.data.intrinsic_matrices,
+        valid_pixel_mask=_workspace_mask(env),
+    )
+    position_w = camera_to_world_position(
+        position_camera, camera.data.pos_w, camera.data.quat_w_ros
+    )
+    robot = env.scene["robot"]
+    position_b = world_to_root_position(
+        position_w, robot.data.root_pos_w, robot.data.root_quat_w
+    )
+    position_b[:, 0].clamp_(0.36, 0.78)
+    position_b[:, 1].clamp_(-0.30, 0.30)
+    position_b[:, 2] = 0.03
+    return position_b
+
+
 def main() -> None:
     num_envs = args_cli.num_envs or benchmark_cfg.num_envs
     episodes_per_level = args_cli.episodes_per_level or benchmark_cfg.episodes_per_level
@@ -79,6 +159,8 @@ def main() -> None:
         raise ValueError("num_envs, episodes_per_level, and max_steps must be positive")
     if args_cli.warmup_steps < 0:
         raise ValueError("warmup_steps cannot be negative")
+    if args_cli.visual_checkpoint is not None and not args_cli.visual_checkpoint.is_file():
+        raise FileNotFoundError(args_cli.visual_checkpoint)
 
     configured_levels = {level.name: level for level in benchmark_cfg.levels}
     selected_names = args_cli.levels or list(configured_levels)
@@ -90,7 +172,8 @@ def main() -> None:
     env_cfg = PickLiftEnvCfg()
     env_cfg.scene.num_envs = num_envs
     physx_capacity = configure_parallel_physx_capacity(env_cfg, num_envs)
-    env_cfg.scene.table_camera = None
+    if args_cli.visual_checkpoint is None:
+        env_cfg.scene.table_camera = None
     env_cfg.scene.robot.spawn.semantic_tags = None
     env_cfg.scene.object.spawn.semantic_tags = None
     env_cfg.scene.table.spawn.semantic_tags = None
@@ -111,7 +194,21 @@ def main() -> None:
         "isaaclab": _distribution_version("isaaclab"),
         "isaacsim": _distribution_version("isaacsim"),
     }
-    runner = VectorizedBenchmarkRunner(env, benchmark_cfg.success_criteria)
+    visual_estimator = (
+        RGBDPoseEstimator.load(args_cli.visual_checkpoint, env.device)
+        if args_cli.visual_checkpoint is not None
+        else None
+    )
+    position_provider = (
+        (lambda current_env: _visual_position_b(current_env, visual_estimator))
+        if visual_estimator is not None
+        else None
+    )
+    runner = VectorizedBenchmarkRunner(
+        env,
+        benchmark_cfg.success_criteria,
+        object_position_provider=position_provider,
+    )
     summaries: list[dict[str, object]] = []
     all_episode_rows: list[dict[str, object]] = []
 
@@ -175,7 +272,11 @@ def main() -> None:
         "config_file": str(benchmark_cfg.path),
         "config_sha256": _sha256(benchmark_cfg.path),
         "task": benchmark_cfg.task,
-        "controller": benchmark_cfg.controller,
+        "controller": (
+            "rgbd_xyz_plus_scripted_absolute_differential_ik"
+            if visual_estimator is not None
+            else benchmark_cfg.controller
+        ),
         "device": args_cli.device,
         "num_envs": num_envs,
         "episodes_per_level": episodes_per_level,
@@ -193,8 +294,18 @@ def main() -> None:
             }
             for level in levels
         ],
-        "camera_enabled": False,
-        "camera_note": "Camera parameters are sampled but not instantiated for the state-based baseline.",
+        "camera_enabled": visual_estimator is not None,
+        "visual_checkpoint": (
+            str(args_cli.visual_checkpoint.resolve()) if args_cli.visual_checkpoint else None
+        ),
+        "object_observation_source": (
+            "rgbd_latched_xyz" if visual_estimator is not None else "simulator_state"
+        ),
+        "camera_note": (
+            "RGB-D is rendered once per episode batch before arm motion; images are not saved."
+            if visual_estimator is not None
+            else "Camera parameters are sampled but not instantiated for the state-based baseline."
+        ),
         "hardware": hardware,
         "software": software,
     }

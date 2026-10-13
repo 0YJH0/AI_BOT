@@ -59,6 +59,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--base-channels", type=int, default=24)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        '--maximum-frame-step',
+        type=int,
+        default=None,
+        help='Use only camera frames at or before this control step (10 keeps pre-motion views).',
+    )
     return parser.parse_args()
 
 
@@ -189,7 +195,13 @@ def main() -> None:
     )
 
     source = {
-        split: RGBDFrameDataset(args.dataset_dir, split, config=config, augment=False)
+        split: RGBDFrameDataset(
+            args.dataset_dir,
+            split,
+            config=config,
+            augment=False,
+            maximum_frame_step=args.maximum_frame_step,
+        )
         for split in ("train", "validation", "test")
     }
     print("Caching preprocessed RGB-D frames...", flush=True)

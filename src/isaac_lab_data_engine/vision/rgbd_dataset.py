@@ -32,11 +32,15 @@ class RGBDFrameDataset(Dataset[dict[str, torch.Tensor]]):
         split: str,
         config: RGBDPoseModelCfg | None = None,
         augment: bool = False,
+        maximum_frame_step: int | None = None,
     ) -> None:
         self.dataset_dir = Path(dataset_dir).resolve()
         self.split = split
         self.config = config or RGBDPoseModelCfg()
         self.augment = augment
+        if maximum_frame_step is not None and maximum_frame_step < 1:
+            raise ValueError('maximum_frame_step must be positive')
+        self.maximum_frame_step = maximum_frame_step
         if split not in {"train", "validation", "test"}:
             raise ValueError(f"Unknown split: {split}")
         if not (self.dataset_dir / "_SUCCESS").is_file():
@@ -52,6 +56,13 @@ class RGBDFrameDataset(Dataset[dict[str, torch.Tensor]]):
         self.frames: list[RGBDFrameRef] = []
         for row in rows:
             frame_count = int(row["camera_frames"])
+            frame_indices = range(frame_count)
+            if maximum_frame_step is not None:
+                shard_path = self.dataset_dir / row['shard']
+                group_path = row['hdf5_group'] + '/camera'
+                with h5py.File(shard_path, 'r', swmr=True) as handle:
+                    frame_steps = handle[group_path + '/frame_step'][:]
+                frame_indices = np.flatnonzero(frame_steps <= maximum_frame_step).tolist()
             self.frames.extend(
                 RGBDFrameRef(
                     episode_id=int(row["episode_id"]),
@@ -59,7 +70,7 @@ class RGBDFrameDataset(Dataset[dict[str, torch.Tensor]]):
                     group_path=row["hdf5_group"] + "/camera",
                     frame_index=frame_index,
                 )
-                for frame_index in range(frame_count)
+                for frame_index in frame_indices
             )
         self._handles: dict[Path, h5py.File] = {}
 
